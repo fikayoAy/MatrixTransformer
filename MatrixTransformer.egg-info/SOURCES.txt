@@ -1,0 +1,10 @@
+LICENSE.txt
+MANIFEST.in
+README.md
+requirements.txt
+setup.py
+MatrixTransformer.egg-info/PKG-INFO
+MatrixTransformer.egg-info/SOURCES.txt
+MatrixTransformer.egg-info/dependency_links.txt
+MatrixTransformer.egg-info/requires.txt
+MatrixTransformer.egg-info/top_level.txt

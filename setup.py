@@ -5,17 +5,17 @@ with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
 setup(
-    name="matrixtransformer",
+    name="MatrixTransformer",
     version="0.1.0",
     author="fikayoAy",
     author_email="author@example.com",  # Replace with your email
     description="A unified framework for structure-preserving matrix transformations",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/fikayoAy/matrixtransformer",  # Replace with your repository URL
+    url="https://github.com/fikayoAy/MatrixTransformer",  # Replace with your repository URL
     project_urls={
-        "Bug Tracker": "https://github.com/fikayoAy/matrixtransformer/issues",
-        "Documentation": "https://github.com/fikayoAy/matrixtransformer#readme",
+        "Bug Tracker": "https://github.com/fikayoAyMatrixTransformer/issues",
+        "Documentation": "https://github.com/fikayoAy/MatrixTransformer#readme",
         "Related Project": "https://github.com/fikayoAy/quantum_accel",
     },
     classifiers=[

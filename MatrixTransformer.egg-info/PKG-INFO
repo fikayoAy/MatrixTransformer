@@ -1,4 +1,43 @@
-<!-- filepath: c:\Users\ayode\ConstantA\matrixTransfomer\README.md -->
+Metadata-Version: 2.4
+Name: MatrixTransformer
+Version: 0.1.0
+Summary: A unified framework for structure-preserving matrix transformations
+Home-page: https://github.com/fikayoAy/MatrixTransformer
+Author: fikayoAy
+Author-email: author@example.com
+Project-URL: Bug Tracker, https://github.com/fikayoAyMatrixTransformer/issues
+Project-URL: Documentation, https://github.com/fikayoAy/MatrixTransformer#readme
+Project-URL: Related Project, https://github.com/fikayoAy/quantum_accel
+Keywords: matrix-transformations,linear-algebra,matrix-operations,scientific-computing,machine-learning,quantum-simulation
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Classifier: Topic :: Scientific/Engineering :: Mathematics
+Classifier: Topic :: Scientific/Engineering :: Artificial Intelligence
+Classifier: Topic :: Scientific/Engineering :: Information Analysis
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+License-File: LICENSE.txt
+Requires-Dist: numpy>=1.20.0
+Requires-Dist: scipy>=1.6.0
+Requires-Dist: torch>=1.9.0
+Requires-Dist: scikit-learn>=0.24.0
+Dynamic: author
+Dynamic: author-email
+Dynamic: classifier
+Dynamic: description
+Dynamic: description-content-type
+Dynamic: home-page
+Dynamic: keywords
+Dynamic: license-file
+Dynamic: project-url
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary
+
 # MatrixTransformer
 
 A unified Python framework for structure-preserving matrix transformations in high-dimensional decision space.
@@ -19,26 +58,9 @@ A unified Python framework for structure-preserving matrix transformations in hi
 🔹 Extendable with custom matrix definitions  
 🔹 Applications in ML, signal processing, quantum simulation, and more
 
-## 📦 Installation
 
-### Requirements
+
 ⚠️ Ensure you are using Python 3.8+ and have NumPy, SciPy, and optionally PyTorch installed.
-
-### Install from wheel file
-```bash
-pip install dist/matrixtransformer-0.1.0-py3-none-any.whl
-```
-
-### Install dependencies
-```bash
-pip install numpy scipy torch
-```
-
-### Verify installation
-```python
-import MatrixTransformer
-print("MatrixTransformer installed successfully!")
-```
 
 ---
 
