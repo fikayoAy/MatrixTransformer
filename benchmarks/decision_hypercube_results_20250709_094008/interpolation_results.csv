@@ -1,0 +1,9 @@
+path_name,start_type,end_type,path_length,smoothness_metric,num_steps
+symmetric_to_positive_definite,symmetric,positive_definite,0.38496463803255887,0.9999999999999998,21
+diagonal_to_upper_triangular,diagonal,upper_triangular,0.6467129512777742,0.9999999999999998,21
+sparse_to_adjacency,sparse,adjacency,0.8914209739663191,0.9999999999999998,21
+toeplitz_to_circulant,toeplitz,circulant,0.39103718656967534,0.9999999999999998,21
+hermitian_to_positive_definite,hermitian,positive_definite,1.2261637631757085,0.9999999999999998,21
+nilpotent_to_upper_triangular,nilpotent,upper_triangular,1.5987166502066332,0.9999999999999998,21
+block_to_banded,block,banded,0.3277270068517328,0.9999999999999998,21
+laplacian_to_symmetric,laplacian,symmetric,0.6545651819007272,0.9999999999999998,21

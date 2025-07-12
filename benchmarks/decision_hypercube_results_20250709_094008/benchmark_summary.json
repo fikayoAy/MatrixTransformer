@@ -1,0 +1,36 @@
+{
+  "hypercube_structure": {
+    "total_vertices": 41,
+    "property_dimensions": 16,
+    "matrix_types_count": 16,
+    "matrix_types": [
+      "hermitian",
+      "toeplitz",
+      "laplacian",
+      "hankel",
+      "circulant",
+      "positive_definite",
+      "sparse",
+      "adjacency",
+      "block",
+      "banded",
+      "nilpotent",
+      "idempotent",
+      "diagonal",
+      "upper_triangular",
+      "lower_triangular",
+      "symmetric"
+    ]
+  },
+  "interpolation_analysis": {
+    "total_paths_tested": 8,
+    "average_smoothness": 0.9999999999999998,
+    "average_path_length": 0.7651635439976412
+  },
+  "transformation_analysis": {
+    "total_transformations_tested": 91,
+    "overall_success_rate": 1.0,
+    "average_property_match": 0.7727954717858426,
+    "average_transformation_time": 0.0010184612902966175
+  }
+}

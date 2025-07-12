@@ -1,0 +1,5 @@
+include LICENSE
+include README.md
+include requirements.txt
+recursive-include benchmark_results *.csv *.json *.md *.png *.npz *.pickle
+global-exclude *.py[cod] __pycache__ *.so *.dylib

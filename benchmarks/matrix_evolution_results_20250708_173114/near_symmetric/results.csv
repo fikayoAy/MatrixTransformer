@@ -1,0 +1,7 @@
+Step,Energy,Quantum Coherence,Step Error,Cumulative Error
+general,4.8333,0.0000,0.0000e+00,0.0000e+00
+symmetric,2.9352,0.3577,1.3083e+00,1.3083e+00
+hermitian,2.9352,0.3577,0.0000e+00,1.3083e+00
+positive_definite,5.1996,0.3730,7.3593e-01,1.0426e+00
+diagonal,4.3849,0.3087,6.3731e-01,1.3909e+00
+toeplitz,4.3203,0.3000,1.7356e-01,1.4223e+00
