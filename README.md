@@ -24,8 +24,10 @@ A unified Python framework for structure-preserving matrix transformations in hi
 ### Requirements
 ⚠️ Ensure you are using Python 3.8+ and have NumPy, SciPy, and optionally PyTorch installed.
 
-### Install from wheel file
+### Clone from github and Install from wheel file
 ```bash
+git clone https://github.com/fikayoAy/MatrixTransformer.git
+cd MatrixTransformer
 pip install dist/matrixtransformer-0.1.0-py3-none-any.whl
 ```
 
