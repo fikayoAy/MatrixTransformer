@@ -20,7 +20,7 @@ A unified Python framework for structure-preserving matrix transformations in hi
 🔹 Applications in ML, signal processing, quantum simulation, and more
 
 ## 📦 Installation
-
+UUpload to PyPI coming soon!
 ### Requirements
 ⚠️ Ensure you are using Python 3.8+ and have NumPy, SciPy, and optionally PyTorch installed.
 
@@ -30,11 +30,18 @@ git clone https://github.com/fikayoAy/MatrixTransformer.git
 cd MatrixTransformer
 pip install dist/matrixtransformer-0.1.0-py3-none-any.whl
 ```
-
+### Check package information and Verify installation package
+```bash
+python -m pip show matrixtransformer
+python -m pip show -f matrixtransformer
+python -c "from matrixtransformer import MatrixTransformer; print('Package imported successfully!')"
+python -c "import matrixtransformer; print(dir(matrixtransformer))"
+python -c "from matrixtransformer import MatrixTransformer; import numpy as np; mt = MatrixTransformer(); print('MatrixTransformer created successfully:', type(mt))"
 ### Install dependencies
 ```bash
 pip install numpy scipy torch
 ```
+
 
 ### Verify installation
 ```python
