@@ -1,10 +1,10 @@
-Metadata-Version: 2.4
+Metadata-Version: 2.1
 Name: MatrixTransformer
 Version: 0.1.0
 Summary: A unified framework for structure-preserving matrix transformations
 Home-page: https://github.com/fikayoAy/MatrixTransformer
 Author: fikayoAy
-Author-email: author@example.com
+Author-email: Ayodeleanjola4@gmail.com
 Project-URL: Bug Tracker, https://github.com/fikayoAyMatrixTransformer/issues
 Project-URL: Documentation, https://github.com/fikayoAy/MatrixTransformer#readme
 Project-URL: Related Project, https://github.com/fikayoAy/quantum_accel
@@ -25,19 +25,8 @@ Requires-Dist: numpy>=1.20.0
 Requires-Dist: scipy>=1.6.0
 Requires-Dist: torch>=1.9.0
 Requires-Dist: scikit-learn>=0.24.0
-Dynamic: author
-Dynamic: author-email
-Dynamic: classifier
-Dynamic: description
-Dynamic: description-content-type
-Dynamic: home-page
-Dynamic: keywords
-Dynamic: license-file
-Dynamic: project-url
-Dynamic: requires-dist
-Dynamic: requires-python
-Dynamic: summary
 
+<!-- filepath: c:\Users\ayode\ConstantA\matrixTransfomer\README.md -->
 # MatrixTransformer
 
 A unified Python framework for structure-preserving matrix transformations in high-dimensional decision space.
@@ -58,9 +47,28 @@ A unified Python framework for structure-preserving matrix transformations in hi
 🔹 Extendable with custom matrix definitions  
 🔹 Applications in ML, signal processing, quantum simulation, and more
 
+## 📦 Installation
 
-
+### Requirements
 ⚠️ Ensure you are using Python 3.8+ and have NumPy, SciPy, and optionally PyTorch installed.
+
+### Clone from github and Install from wheel file
+```bash
+git clone https://github.com/fikayoAy/MatrixTransformer.git
+cd MatrixTransformer
+pip install dist/matrixtransformer-0.1.0-py3-none-any.whl
+```
+
+### Install dependencies
+```bash
+pip install numpy scipy torch
+```
+
+### Verify installation
+```python
+import MatrixTransformer
+print("MatrixTransformer installed successfully!")
+```
 
 ---
 

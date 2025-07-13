@@ -14,7 +14,8 @@ This package provides tools for:
 
 __version__ = '0.1.0'
 
-from .Matrixtransfomrer import MatrixTransformer, MatrixType
+# Fixed the typo in the filename
+from .matrixtransformer import MatrixTransformer, MatrixType
 from .base import *
 from .base_classes import *
 from .graph import *

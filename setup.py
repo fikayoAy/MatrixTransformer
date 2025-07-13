@@ -8,7 +8,7 @@ setup(
     name="MatrixTransformer",
     version="0.1.0",
     author="fikayoAy",
-    author_email="author@example.com",  # Replace with your email
+    author_email="Ayodeleanjola4@gmail.com",  # Replace with your email
     description="A unified framework for structure-preserving matrix transformations",
     long_description=long_description,
     long_description_content_type="text/markdown",
