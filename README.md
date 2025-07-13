@@ -45,7 +45,7 @@ pip install numpy scipy torch
 
 ### Verify installation
 ```python
-import MatrixTransformer
+import matrixTransformer
 print("MatrixTransformer installed successfully!")
 ```
 
@@ -57,7 +57,7 @@ print("MatrixTransformer installed successfully!")
 
 ```python
 import numpy as np
-from MatrixTransformer import MatrixTransformer
+from matrixTransformer import MatrixTransformer
 
 # Create a transformer instance
 transformer = MatrixTransformer()
