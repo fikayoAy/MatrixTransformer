@@ -20,7 +20,7 @@ A unified Python framework for structure-preserving matrix transformations in hi
 🔹 Applications in ML, signal processing, quantum simulation, and more
 
 ## 📦 Installation
-UUpload to PyPI coming soon!
+Upload to PyPI coming soon!
 ### Requirements
 ⚠️ Ensure you are using Python 3.8+ and have NumPy, SciPy, and optionally PyTorch installed.
 
