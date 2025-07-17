@@ -465,10 +465,6 @@ blended_matrix = transformer.blended_matrix_construction(
 
 ---
 
-- Visualization of results
-
----
-
 ## 🧠 Citation
 
 If you use this library in your work, please cite the relevant papers:
