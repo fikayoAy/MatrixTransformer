@@ -994,6 +994,7 @@ class MatrixTransformer:
             # Create coordinate position based on property values
             coords = []
             for prop in self.properties:
+                # Use the actual continuous property values instead of binary/thresholded values
                 coords.append(properties.get(prop, 0.5))
             
             # Ensure coords has exactly embedding_dim dimensions
@@ -1004,7 +1005,7 @@ class MatrixTransformer:
                 
             coords_tuple = tuple(coords)
             vertex = self.get_vertex(coords_tuple, properties)
-            vertex['type'] = matrix_type  # Explicitly set the type
+            vertex['type'] = matrix_type
             
             key_matrix_types[matrix_type] = vertex
             matrix_type_coords[matrix_type] = coords_tuple
@@ -1020,7 +1021,34 @@ class MatrixTransformer:
                     # If edges is not a list for some reason, initialize it as a list
                     self.hypercube_graph.edges = [(i, j)]
 
-        # Generate intermediate vertices for smoother transitions
+        # NEW PART 1: Generate intermediate vertices with enhanced density
+        # Add more points throughout the hypercube by creating interpolations
+        num_intermediate_points = 16  # Increased from 5 to 16 for richer representation
+        for type1, coords1 in matrix_type_coords.items():
+            for type2, coords2 in matrix_type_coords.items():
+                if type1 != type2:
+                    # Create multiple intermediate points along the line between the vertices
+                    for i in range(1, num_intermediate_points):
+                        alpha = i / (num_intermediate_points + 1)  # Interpolation factor
+                        # Interpolate coordinates
+                        intermediate = tuple(c1 * (1-alpha) + c2 * alpha for c1, c2 in zip(coords1, coords2))
+                        
+                        # Blend properties with same interpolation factor
+                        type1_props = self.cube[coords1]['properties']
+                        type2_props = self.cube[coords2]['properties']
+                        blended_props = {
+                            prop: type1_props.get(prop, 0.0) * (1-alpha) + type2_props.get(prop, 0.0) * alpha
+                            for prop in self.properties
+                        }
+                        
+                        # Create vertex at intermediate position - only if it doesn't already exist
+                        if intermediate not in self.cube:
+                            blended_type = f"{type1}_{type2}_{i}"  # Create a blended type name
+                            self.get_vertex(intermediate, blended_props)
+                            # Set the most suitable type based on property similarity
+                            self.cube[intermediate]['type'] = self._identify_matrix_type(blended_props)
+
+        # Generate simpler intermediate vertices for neighbors (keep original code too)
         for matrix_type, coords in matrix_type_coords.items():
             # For each matrix type, create intermediate points to neighbors
             for neighbor_type in self.matrix_graph.get(matrix_type, {}).get('neighbors', []):
@@ -1035,6 +1063,31 @@ class MatrixTransformer:
                     blended_props = {prop: (type1_props.get(prop, 0.5) + type2_props.get(prop, 0.5)) / 2 
                                     for prop in self.properties}
                     self.get_vertex(intermediate, blended_props)
+
+        # NEW PART 2: Add property interpolation capability
+        # Add a method to find matrices with arbitrary property combinations
+        def get_matrix_at_properties(self, target_properties):
+            """Find coordinates in the hypercube for specified property values"""
+            coords = []
+            for prop in self.properties:
+                coords.append(target_properties.get(prop, 0.5))
+                
+            # Ensure proper dimension
+            if len(coords) < self.hypercube_graph.cardinality_dim:
+                coords.extend([0.5] * (self.hypercube_graph.cardinality_dim - len(coords)))
+            
+            coords_tuple = tuple(coords[:self.hypercube_graph.cardinality_dim])
+            
+            # If the exact point exists, return it
+            if coords_tuple in self.cube:
+                return self.cube[coords_tuple]
+            
+            # Otherwise create it dynamically
+            return self.get_vertex(coords_tuple, target_properties)
+
+        # Attach this method to the class
+        import types
+        self.get_matrix_at_properties = types.MethodType(get_matrix_at_properties, self)
 
         # Ensure all vertices are connected by adding spanning tree
         try:
@@ -1055,6 +1108,35 @@ class MatrixTransformer:
                     
         return self.cube
 
+    def get_matrix_with_properties(self, property_values):
+        """
+        Get a matrix with specific property values from the infinite hypercube space.
+        
+        Args:
+            property_values (dict): Dictionary mapping property names to their desired values (0.0-1.0)
+                                e.g., {'symmetric': 0.9, 'sparsity': 0.7}
+        
+        Returns:
+            dict: Hypercube vertex representing the matrix with the specified properties.
+                The vertex contains 'type', 'properties', and 'transform_method' for creating matrices.
+        """
+        # Validate input
+        if not property_values or not isinstance(property_values, dict):
+            raise ValueError("Property values must be provided as a dictionary")
+            
+        # Use the get_matrix_at_properties method to find the vertex in the hypercube
+        vertex = self.get_matrix_at_properties(property_values)
+        
+        # Get the matrix type
+        matrix_type = vertex['type']
+        
+        # Add transform method to the vertex for easy access
+        transform_method = self._get_transform_method(matrix_type)
+        vertex['transform_method'] = transform_method
+        
+        # Return the enhanced vertex
+        return vertex
+    
     def _create_continuous_spanning_tree(self, vertices):
         """Create a minimal spanning tree to ensure all vertices are connected."""
         import numpy as np
@@ -1106,23 +1188,49 @@ class MatrixTransformer:
         rows, cols = matrix_np.shape
         is_square = rows == cols
         
+        # Check if matrix is sparse
+        is_sparse_matrix = hasattr(matrix_np, 'toarray') or hasattr(matrix_np, 'todense')
+        
         # Calculate symmetry (only for square matrices)
         if is_square:
-            if np.iscomplexobj(matrix_np):
-                # For complex matrices, check Hermitian property (conjugate transpose equality)
-                symmetry = 1.0 - min(1.0, np.sum(np.abs(matrix_np - matrix_np.conj().T)) / (np.sum(np.abs(matrix_np)) + 1e-10))
+            if is_sparse_matrix:
+                # For sparse matrices, compare with transpose
+                from scipy import sparse
+                if sparse.issparse(matrix_np):
+                    diff = matrix_np - matrix_np.transpose()
+                    sym_ratio = 1.0 - (abs(diff).sum() / (abs(matrix_np).sum() + 1e-10))
+                    properties['symmetric'] = float(sym_ratio)
+                else:
+                    properties['symmetric'] = 0.0
             else:
-                # For real matrices, check standard symmetry
-                symmetry = 1.0 - min(1.0, np.sum(np.abs(matrix_np - matrix_np.T)) / (np.sum(np.abs(matrix_np)) + 1e-10))
-            properties['symmetric'] = symmetry
+                # For dense matrices
+                if np.iscomplexobj(matrix_np):
+                    # For complex matrices, check Hermitian property (conjugate transpose equality)
+                    symmetry = 1.0 - min(1.0, np.sum(np.abs(matrix_np - matrix_np.conj().T)) / (np.sum(np.abs(matrix_np)) + 1e-10))
+                else:
+                    # For real matrices, check standard symmetry
+                    symmetry = 1.0 - min(1.0, np.sum(np.abs(matrix_np - matrix_np.T)) / (np.sum(np.abs(matrix_np)) + 1e-10))
+                properties['symmetric'] = symmetry
         else:
             properties['symmetric'] = 0.0
         
         # Calculate sparsity
         if matrix_np.size > 0:
-            non_zeros = np.count_nonzero(np.abs(matrix_np) > 1e-10)
-            sparsity = 1.0 - (non_zeros / matrix_np.size)
-            properties['sparsity'] = sparsity
+            if is_sparse_matrix:
+                # For sparse matrices, use built-in methods
+                if hasattr(matrix_np, 'nnz'):
+                    non_zeros = matrix_np.nnz
+                elif hasattr(matrix_np, 'count_nonzero'):
+                    non_zeros = matrix_np.count_nonzero()
+                else:
+                    # Fallback for other sparse formats
+                    non_zeros = np.count_nonzero(matrix_np.todense() if hasattr(matrix_np, 'todense') else matrix_np.toarray())
+                sparsity = 1.0 - (non_zeros / matrix_np.size)
+            else:
+                # For dense matrices
+                non_zeros = np.count_nonzero(np.abs(matrix_np) > 1e-10)
+                sparsity = 1.0 - (non_zeros / matrix_np.size)
+            properties['sparsity'] = float(sparsity)
         else:
             properties['sparsity'] = 1.0
         
@@ -1130,11 +1238,27 @@ class MatrixTransformer:
         if is_square:
             # Check diagonal dominance
             diagonal = np.diag(matrix_np)
-            off_diagonal = matrix_np - np.diag(diagonal)
-            if np.sum(np.abs(diagonal)) > 0:
-                diagonal_only = 1.0 - min(1.0, np.sum(np.abs(off_diagonal)) / np.sum(np.abs(diagonal)))
+            if is_sparse_matrix:
+                # For sparse matrices, extract diagonal and off-diagonal components
+                from scipy import sparse
+                if sparse.issparse(matrix_np):
+                    diag_sparse = sparse.diags(diagonal, 0, shape=matrix_np.shape)
+                    off_diag = matrix_np - diag_sparse
+                    diag_sum = abs(diagonal).sum()
+                    off_diag_sum = abs(off_diag).sum()
+                    if diag_sum > 0:
+                        diagonal_only = 1.0 - min(1.0, off_diag_sum / diag_sum)
+                    else:
+                        diagonal_only = 0.0
+                else:
+                    diagonal_only = 0.0
             else:
-                diagonal_only = 0.0
+                # For dense matrices
+                off_diagonal = matrix_np - np.diag(diagonal)
+                if np.sum(np.abs(diagonal)) > 0:
+                    diagonal_only = 1.0 - min(1.0, np.sum(np.abs(off_diagonal)) / np.sum(np.abs(diagonal)))
+                else:
+                    diagonal_only = 0.0
             properties['diagonal_only'] = diagonal_only
         else:
             properties['diagonal_only'] = 0.0
@@ -1143,9 +1267,22 @@ class MatrixTransformer:
         if is_square and rows > 1:
             diagonals = []
             for k in range(1-rows, rows):
-                diag = np.diag(matrix_np, k)
-                if len(diag) > 1:
-                    diagonals.append(diag)
+                if is_sparse_matrix:
+                    # For sparse matrices, extract diagonals efficiently
+                    from scipy import sparse
+                    if sparse.issparse(matrix_np):
+                        diag = matrix_np.diagonal(k)
+                        if len(diag) > 1:
+                            diagonals.append(diag)
+                    else:
+                        diag = np.diag(matrix_np.toarray() if hasattr(matrix_np, 'toarray') else matrix_np.todense(), k)
+                        if len(diag) > 1:
+                            diagonals.append(diag)
+                else:
+                    # For dense matrices
+                    diag = np.diag(matrix_np, k)
+                    if len(diag) > 1:
+                        diagonals.append(diag)
             
             if diagonals:
                 # Measure how constant each diagonal is
@@ -1163,9 +1300,15 @@ class MatrixTransformer:
         # Calculate positive_eigenvalues (for positive definite matrices)
         if is_square:
             try:
+                # Convert sparse matrix to array for eigenvalue calculation if needed
+                if is_sparse_matrix:
+                    matrix_dense = matrix_np.toarray() if hasattr(matrix_np, 'toarray') else matrix_np.todense()
+                else:
+                    matrix_dense = matrix_np
+                    
                 # Compute eigenvalues for moderate sized matrices
                 if rows <= 100:  # Avoid expensive eigenvalue computation for large matrices
-                    eigenvalues = np.linalg.eigvals(matrix_np)
+                    eigenvalues = np.linalg.eigvals(matrix_dense)
                     min_eig = np.min(np.real(eigenvalues))
                     properties['positive_eigenvalues'] = 1.0 if min_eig > 0 else max(0.0, min_eig / (np.max(np.abs(eigenvalues)) + 1e-10) + 1.0)
                 else:
@@ -1180,9 +1323,23 @@ class MatrixTransformer:
         properties['complex'] = float(np.iscomplexobj(matrix_np))
         
         # Calculate zero_row_sum (Laplacian-like)
-        row_sums = np.abs(np.sum(matrix_np, axis=1))
-        avg_row_sum = np.mean(row_sums)
-        max_val = np.max(np.abs(matrix_np)) * cols
+        if is_sparse_matrix:
+            # For sparse matrices, compute row sums efficiently
+            from scipy import sparse
+            if sparse.issparse(matrix_np):
+                row_sums = np.abs(matrix_np.sum(axis=1)).flatten()
+                avg_row_sum = np.mean(row_sums)
+                max_val = np.max(np.abs(matrix_np.data)) * cols if hasattr(matrix_np, 'data') else 1.0
+            else:
+                dense_matrix = matrix_np.toarray() if hasattr(matrix_np, 'toarray') else matrix_np.todense()
+                row_sums = np.abs(np.sum(dense_matrix, axis=1))
+                avg_row_sum = np.mean(row_sums)
+                max_val = np.max(np.abs(dense_matrix)) * cols
+        else:
+            row_sums = np.abs(np.sum(matrix_np, axis=1))
+            avg_row_sum = np.mean(row_sums)
+            max_val = np.max(np.abs(matrix_np)) * cols
+        
         if max_val > 0:
             properties['zero_row_sum'] = 1.0 - min(1.0, avg_row_sum / max_val)
         else:
@@ -1190,74 +1347,133 @@ class MatrixTransformer:
         
         # Check for shift_invariant (circulant-like)
         if is_square and rows > 1:
-            # For a circulant matrix, each row is a circular shift of the first row
-            first_row = matrix_np[0, :]
-            shift_diffs = []
-            for i in range(1, rows):
-                # Calculate how closely row i matches a circular shift of first row
-                shifted = np.roll(first_row, i)
-                diff = np.sum(np.abs(matrix_np[i, :] - shifted)) / (np.sum(np.abs(matrix_np[i, :])) + 1e-10)
-                shift_diffs.append(1.0 - min(1.0, diff))
+            if is_sparse_matrix:
+                # For sparse matrices, convert to dense for circular shift check
+                dense_matrix = matrix_np.toarray() if hasattr(matrix_np, 'toarray') else matrix_np.todense()
+                first_row = dense_matrix[0, :]
+                shift_diffs = []
+                for i in range(1, rows):
+                    # Calculate how closely row i matches a circular shift of first row
+                    shifted = np.roll(first_row, i)
+                    diff = np.sum(np.abs(dense_matrix[i, :] - shifted)) / (np.sum(np.abs(dense_matrix[i, :])) + 1e-10)
+                    shift_diffs.append(1.0 - min(1.0, diff))
+            else:
+                # For dense matrices
+                first_row = matrix_np[0, :]
+                shift_diffs = []
+                for i in range(1, rows):
+                    # Calculate how closely row i matches a circular shift of first row
+                    shifted = np.roll(first_row, i)
+                    diff = np.sum(np.abs(matrix_np[i, :] - shifted)) / (np.sum(np.abs(matrix_np[i, :])) + 1e-10)
+                    shift_diffs.append(1.0 - min(1.0, diff))
             
-            properties['shift_invariant'] = np.mean(shift_diffs)
+            properties['shift_invariant'] = np.mean(shift_diffs) if shift_diffs else 0.0
         else:
             properties['shift_invariant'] = 0.0
         
         # Check for binary values (adjacency-like)
-        binary_ratio = np.sum((np.abs(matrix_np) < 1e-10) | (np.abs(matrix_np - 1) < 1e-10)) / matrix_np.size
+        if is_sparse_matrix:
+            # For sparse matrices, check if all non-zero values are close to 1
+            from scipy import sparse
+            if sparse.issparse(matrix_np):
+                zeros = matrix_np.nnz == 0 or matrix_np.size - matrix_np.nnz
+                ones = np.sum(np.abs(matrix_np.data - 1) < 1e-10) if hasattr(matrix_np, 'data') else 0
+                binary_ratio = (zeros + ones) / matrix_np.size
+            else:
+                dense_matrix = matrix_np.toarray() if hasattr(matrix_np, 'toarray') else matrix_np.todense()
+                binary_ratio = np.sum((np.abs(dense_matrix) < 1e-10) | (np.abs(dense_matrix - 1) < 1e-10)) / matrix_np.size
+        else:
+            binary_ratio = np.sum((np.abs(matrix_np) < 1e-10) | (np.abs(matrix_np - 1) < 1e-10)) / matrix_np.size
+        
         properties['binary'] = binary_ratio
         
-        # Check for upper_triangular
+        # Check for upper_triangular and lower_triangular
         if is_square:
-            # Look at lower triangle (excluding diagonal)
-            lower_triangle = np.tril(matrix_np, k=-1)
-            lower_sum = np.sum(np.abs(lower_triangle))
-            total_sum = np.sum(np.abs(matrix_np))
+            if is_sparse_matrix:
+                # For sparse matrices
+                from scipy import sparse
+                if sparse.issparse(matrix_np):
+                    dense_matrix = matrix_np.toarray()
+                    lower_triangle = np.tril(dense_matrix, k=-1)
+                    upper_triangle = np.triu(dense_matrix, k=1)
+                    total_sum = np.sum(np.abs(dense_matrix))
+                    lower_sum = np.sum(np.abs(lower_triangle))
+                    upper_sum = np.sum(np.abs(upper_triangle))
+                else:
+                    dense_matrix = matrix_np.toarray() if hasattr(matrix_np, 'toarray') else matrix_np.todense()
+                    lower_triangle = np.tril(dense_matrix, k=-1)
+                    upper_triangle = np.triu(dense_matrix, k=1)
+                    total_sum = np.sum(np.abs(dense_matrix))
+                    lower_sum = np.sum(np.abs(lower_triangle))
+                    upper_sum = np.sum(np.abs(upper_triangle))
+            else:
+                # For dense matrices
+                lower_triangle = np.tril(matrix_np, k=-1)
+                upper_triangle = np.triu(matrix_np, k=1)
+                total_sum = np.sum(np.abs(matrix_np))
+                lower_sum = np.sum(np.abs(lower_triangle))
+                upper_sum = np.sum(np.abs(upper_triangle))
+            
             if total_sum > 0:
                 properties['upper_triangular'] = 1.0 - min(1.0, lower_sum / total_sum)
-            else:
-                properties['upper_triangular'] = 1.0
-        else:
-            properties['upper_triangular'] = 0.0
-        
-        # Check for lower_triangular
-        if is_square:
-            # Look at upper triangle (excluding diagonal)
-            upper_triangle = np.triu(matrix_np, k=1)
-            upper_sum = np.sum(np.abs(upper_triangle))
-            total_sum = np.sum(np.abs(matrix_np))
-            if total_sum > 0:
                 properties['lower_triangular'] = 1.0 - min(1.0, upper_sum / total_sum)
             else:
+                properties['upper_triangular'] = 1.0
                 properties['lower_triangular'] = 1.0
         else:
+            properties['upper_triangular'] = 0.0
             properties['lower_triangular'] = 0.0
         
         # Calculate anti-diagonal property (for Hankel matrices)
         if is_square:
-            indices = np.arange(rows)
-            anti_diag_indices = (indices, rows - 1 - indices)
-            anti_diagonal = matrix_np[anti_diag_indices]
-            
-            # Check if elements on each anti-diagonal are approximately equal
-            anti_diag_constancy = []
-            
-            # FIX: Properly handle potential empty lists with defensive coding
-            for k in range(-(rows-1), rows):
-                # Find indices for the kth anti-diagonal
-                anti_diag_indices = [(r, 2*rows-2-r-k) for r in range(rows) if 0 <= 2*rows-2-r-k < rows]
+            if is_sparse_matrix:
+                # For sparse matrices, convert to dense for anti-diagonal checks
+                dense_matrix = matrix_np.toarray() if hasattr(matrix_np, 'toarray') else matrix_np.todense()
                 
-                # Only proceed if we found valid indices
-                if anti_diag_indices:
-                    i, j = zip(*anti_diag_indices)
-                    diag_values = matrix_np[i, j]
+                # Check if elements on each anti-diagonal are approximately equal
+                anti_diag_constancy = []
+                
+                # FIX: Properly handle potential empty lists with defensive coding
+                for k in range(-(rows-1), rows):
+                    # Find indices for the kth anti-diagonal
+                    anti_diag_indices = [(r, 2*rows-2-r-k) for r in range(rows) if 0 <= 2*rows-2-r-k < rows]
                     
-                    if len(diag_values) > 1:
-                        # Calculate constancy as inverse of normalized standard deviation
-                        std = np.std(diag_values)
-                        mean_abs = np.mean(np.abs(diag_values))
-                        if mean_abs > 1e-10:
-                            anti_diag_constancy.append(1.0 - min(1.0, std / mean_abs))
+                    # Only proceed if we found valid indices
+                    if anti_diag_indices:
+                        i, j = zip(*anti_diag_indices)
+                        diag_values = dense_matrix[i, j]
+                        
+                        if len(diag_values) > 1:
+                            # Calculate constancy as inverse of normalized standard deviation
+                            std = np.std(diag_values)
+                            mean_abs = np.mean(np.abs(diag_values))
+                            if mean_abs > 1e-10:
+                                anti_diag_constancy.append(1.0 - min(1.0, std / mean_abs))
+            else:
+                # For dense matrices
+                indices = np.arange(rows)
+                anti_diag_indices = (indices, rows - 1 - indices)
+                anti_diagonal = matrix_np[anti_diag_indices]
+                
+                # Check if elements on each anti-diagonal are approximately equal
+                anti_diag_constancy = []
+                
+                # FIX: Properly handle potential empty lists with defensive coding
+                for k in range(-(rows-1), rows):
+                    # Find indices for the kth anti-diagonal
+                    anti_diag_indices = [(r, 2*rows-2-r-k) for r in range(rows) if 0 <= 2*rows-2-r-k < rows]
+                    
+                    # Only proceed if we found valid indices
+                    if anti_diag_indices:
+                        i, j = zip(*anti_diag_indices)
+                        diag_values = matrix_np[i, j]
+                        
+                        if len(diag_values) > 1:
+                            # Calculate constancy as inverse of normalized standard deviation
+                            std = np.std(diag_values)
+                            mean_abs = np.mean(np.abs(diag_values))
+                            if mean_abs > 1e-10:
+                                anti_diag_constancy.append(1.0 - min(1.0, std / mean_abs))
             
             if anti_diag_constancy:
                 properties['anti_diagonal'] = np.mean(anti_diag_constancy)
@@ -1266,21 +1482,43 @@ class MatrixTransformer:
         else:
             properties['anti_diagonal'] = 0.0
         
+        # Additional property calculations for all matrix types (band-limited, nilpotent, idempotent)
+        # and enhanced values remain the same as in the original code
+        
         # Check for band-limited structure
         if is_square:
-            # Calculate how concentrated values are near the diagonal
-            band_limited = 0.0
-            total_val = np.sum(np.abs(matrix_np))
-            if total_val > 0:
-                diagonal_weight = 0.0
-                for k in range(-(rows-1), rows):
-                    # Weight by distance from diagonal
-                    diag_vals = np.diag(matrix_np, k)
-                    diag_sum = np.sum(np.abs(diag_vals))
-                    weight = np.exp(-abs(k) / max(1, rows/10))  # Exponential decay based on distance from diagonal
-                    diagonal_weight += diag_sum * weight
+            if is_sparse_matrix:
+                # For sparse matrices, convert to dense for band calculations
+                dense_matrix = matrix_np.toarray() if hasattr(matrix_np, 'toarray') else matrix_np.todense()
                 
-                band_limited = diagonal_weight / total_val
+                # Calculate how concentrated values are near the diagonal
+                band_limited = 0.0
+                total_val = np.sum(np.abs(dense_matrix))
+                if total_val > 0:
+                    diagonal_weight = 0.0
+                    for k in range(-(rows-1), rows):
+                        # Weight by distance from diagonal
+                        diag_vals = np.diag(dense_matrix, k)
+                        diag_sum = np.sum(np.abs(diag_vals))
+                        weight = np.exp(-abs(k) / max(1, rows/10))  # Exponential decay based on distance from diagonal
+                        diagonal_weight += diag_sum * weight
+                    
+                    band_limited = diagonal_weight / total_val
+            else:
+                # Calculate how concentrated values are near the diagonal
+                band_limited = 0.0
+                total_val = np.sum(np.abs(matrix_np))
+                if total_val > 0:
+                    diagonal_weight = 0.0
+                    for k in range(-(rows-1), rows):
+                        # Weight by distance from diagonal
+                        diag_vals = np.diag(matrix_np, k)
+                        diag_sum = np.sum(np.abs(diag_vals))
+                        weight = np.exp(-abs(k) / max(1, rows/10))  # Exponential decay based on distance from diagonal
+                        diagonal_weight += diag_sum * weight
+                    
+                    band_limited = diagonal_weight / total_val
+            
             properties['band_limited'] = band_limited
         else:
             properties['band_limited'] = 0.0
@@ -1288,13 +1526,19 @@ class MatrixTransformer:
         # Check for nilpotent property
         if is_square:
             try:
+                # Convert to dense for power calculations
+                if is_sparse_matrix:
+                    matrix_dense = matrix_np.toarray() if hasattr(matrix_np, 'toarray') else matrix_np.todense()
+                else:
+                    matrix_dense = matrix_np
+                
                 # Approximate nilpotence by checking powers
                 max_power = min(10, rows)  # Avoid excessive computation
                 power = np.eye(rows)
                 is_nilpotent = False
                 
                 for i in range(max_power):
-                    power = power @ matrix_np
+                    power = power @ matrix_dense
                     if np.allclose(power, 0, atol=1e-6):
                         is_nilpotent = True
                         break
@@ -1308,8 +1552,15 @@ class MatrixTransformer:
         # Check for idempotent property (M^2 = M)
         if is_square:
             try:
-                squared = matrix_np @ matrix_np
-                idempotent_error = np.sum(np.abs(squared - matrix_np)) / (np.sum(np.abs(matrix_np)) + 1e-10)
+                # Convert to dense for matrix multiplication
+                if is_sparse_matrix:
+                    matrix_dense = matrix_np.toarray() if hasattr(matrix_np, 'toarray') else matrix_np.todense()
+                    squared = matrix_dense @ matrix_dense
+                    idempotent_error = np.sum(np.abs(squared - matrix_dense)) / (np.sum(np.abs(matrix_dense)) + 1e-10)
+                else:
+                    squared = matrix_np @ matrix_np
+                    idempotent_error = np.sum(np.abs(squared - matrix_np)) / (np.sum(np.abs(matrix_np)) + 1e-10)
+                
                 properties['idempotent'] = 1.0 - min(1.0, idempotent_error)
             except:
                 properties['idempotent'] = 0.0
@@ -1406,18 +1657,35 @@ class MatrixTransformer:
                 if coords not in self.cube:
                     side_length = self._calculate_hypercube_side_length(16, matrix_type)
                     
-                    # Create cardinality vector
-                    card = np.zeros(8)
-                    if properties.get('symmetric', False): card[0] = 0.8
-                    if properties.get('sparsity', False): card[1] = 0.7
-                    if properties.get('positive_eigenvalues', False): card[2] = 0.9
-                    if properties.get('constant_diagonal', False): card[3] = 0.6
-                    if properties.get('diagonal_only', False): card[4] = 0.9
-                    if properties.get('upper_triangular', False): card[5] = 0.75
-                    if properties.get('lower_triangular', False): card[6] = 0.75
-                    if properties.get('block_structure', False): card[7] = 0.65
+                    # IMPROVED: Create cardinality vector that matches ALL 16 properties
+                    card = np.zeros(16)  # Match the hypercube dimension
                     
-                    # Project cardinality to hypersphere
+                    # Map all 16 properties with their importance weights
+                    property_weights = {
+                        'symmetric': 0.8,
+                        'sparsity': 0.7, 
+                        'constant_diagonal': 0.6,
+                        'positive_eigenvalues': 0.9,
+                        'complex': 0.5,
+                        'zero_row_sum': 0.8,
+                        'shift_invariant': 0.7,
+                        'binary': 0.6,
+                        'diagonal_only': 0.95,  # Very distinctive
+                        'upper_triangular': 0.75,
+                        'lower_triangular': 0.75,
+                        'nilpotent': 0.85,
+                        'idempotent': 0.8,
+                        'block_structure': 0.65,
+                        'band_limited': 0.7,
+                        'anti_diagonal': 0.6
+                    }
+                    
+                    # Set cardinality values for all properties
+                    for i, prop in enumerate(self.properties[:16]):
+                        if prop in properties and properties[prop]:
+                            card[i] = property_weights.get(prop, 0.5)
+                    
+                    # Project cardinality to hypersphere (adjust radius if needed)
                     sphere_embedding = self._project_to_hypersphere(card, radius=1.0, preserve_type=False)
                     
                     # Store in hypercube
@@ -1425,14 +1693,63 @@ class MatrixTransformer:
                         'type': matrix_type,
                         'properties': {prop: (digit == '1') for prop, digit in zip(self.properties, binary_rep)},
                         'side_length': side_length,
-                        'cardinality': card,
+                        'cardinality': card,  # Now 16D to match hypercube
                         'sphere_embedding': sphere_embedding,
-                        'embedding_radius': np.random.normal(0, 1, 8)
+                        'embedding_radius': np.random.normal(0, 1, 16)  # Also 16D
                     }
         
         # Update type coordinate cache
         if hasattr(self, '_type_coordinate_cache'):
             self._type_coordinate_cache.pop(matrix_type, None)  # Clear cached coordinates
+        
+        # Update quantum field with new matrix type addition
+        if hasattr(self, '_update_quantum_field') and hasattr(self, 'quantum_field'):
+            try:
+                # Create a test matrix of the new type to demonstrate its properties
+                test_matrix = np.eye(4)  # Start with identity matrix
+                
+                # Apply the new transformation rule to create representative matrix
+                if transform_rule:
+                    try:
+                        transformed_test = transform_rule(test_matrix)
+                    except Exception:
+                        # If transform fails, use identity
+                        transformed_test = test_matrix
+                else:
+                    transformed_test = test_matrix
+                
+                # Calculate attention scores for the new matrix type
+                attention_scores = {}
+                
+                # Give high attention to the newly added type
+                attention_scores[matrix_type] = 0.8
+                
+                # Add moderate attention to neighbors
+                for neighbor in neighbors:
+                    if neighbor in self.matrix_graph:
+                        attention_scores[neighbor] = 0.6
+                
+                # Add lower attention to other existing types
+                for existing_type in self.matrix_graph.keys():
+                    if existing_type not in attention_scores:
+                        attention_scores[existing_type] = 0.3
+                
+                # Normalize attention scores
+                total_attention = sum(attention_scores.values())
+                if total_attention > 0:
+                    attention_scores = {k: v/total_attention for k, v in attention_scores.items()}
+                
+                # Update quantum field with the new matrix type information
+                self._update_quantum_field(
+                    transformed_test,
+                    attention_scores,
+                    0.05  # Moderate update for new type addition
+                )
+                
+            except Exception as e:
+                # Log error but don't fail the add_transform operation
+                import logging
+                logging.warning(f"Failed to update quantum field for new matrix type {matrix_type}: {e}")
                 
         return True
 
@@ -3395,47 +3712,151 @@ class MatrixTransformer:
         # Otherwise return general type
         return 'general'
                             
-    def _calculate_graph_attention(self, matrix, node_types=None):
-        """
-        Calculate graph attention scores between the input matrix and different matrix types
-        """
-        # Handle empty matrices
-        if isinstance(matrix, np.ndarray) and matrix.size == 0:
-            # Return default scores for empty matrices
-            return {node_type: 0.5 for node_type in (node_types or self.matrix_graph.keys())}
     
-        # If no node types specified, use all matrix types
-        node_types = node_types or list(self.matrix_graph.keys())
+    def _calculate_structural_similarity(self, matrix, node_type):
+        """
+        Calculate structural similarity between matrix and target type using matrix structure comparison.
         
-        # Initialize attention scores
-        attention_scores = {}
-        
-        # Detect the type of input matrix
-        input_type = self._detect_matrix_type(matrix)
-        
-        # First level: direct structural similarity
-        for node_type in node_types:
-            # Base similarity from graph distance
-            if input_type == node_type:
-                base_score = 1.0
-            elif input_type in self.matrix_graph and node_type in self.matrix_graph[input_type]['neighbors']:
-                base_score = 0.7  # Neighbor
-            else:
-                # Calculate graph distance
-                distance = self._calculate_graph_distance(input_type, node_type)
-                base_score = max(0.1, 1.0 - 0.2 * distance)
+        Args:
+            matrix: Input matrix to compare
+            node_type: Target matrix type
             
-            # Calculate mathematical property similarity
-            property_score = self._calculate_property_similarity(matrix, node_type)
-            
-            # Calculate structural coherence for this transformation
-            coherence_score = self._calculate_transformation_coherence(matrix, node_type)
-            
-            # Combine scores (with weights emphasizing mathematical properties)
-            attention_scores[node_type] = 0.3 * base_score + 0.4 * property_score + 0.3 * coherence_score
+        Returns:
+            float: Structural similarity score between 0 and 1
+        """
+        if isinstance(matrix, torch.Tensor):
+            matrix_np = matrix.detach().cpu().numpy()
+        else:
+            matrix_np = matrix
         
-        return attention_scores
-    
+        # Get reference matrix for this node type
+        if node_type in self.matrix_graph:
+            # Create a reference matrix of this type
+            reference_matrix = self._create_reference_matrix(node_type, matrix_np.shape)
+        else:
+            return 0.5  # Default similarity
+        
+        # Use existing _compare_matrix_structures method
+        return self._compare_matrix_structures(matrix_np, reference_matrix)
+
+    def _create_reference_matrix(self, matrix_type, shape):
+        """
+        Create a reference matrix of the specified type and shape.
+        
+        Args:
+            matrix_type: String name of the matrix type
+            shape: Desired shape for the reference matrix
+            
+        Returns:
+            np.ndarray: Reference matrix of the specified type
+        """
+        # Create base matrix
+        base_matrix = np.random.randn(*shape)
+        
+        # Apply transformation rules to create the reference type
+        transform_method = self._get_transform_method(matrix_type)
+        if transform_method:
+            return transform_method(base_matrix)
+        else:
+            return base_matrix
+
+    def _calculate_energy_similarity(self, matrix, node_type):
+        """
+        Calculate energy/norm similarity between matrix and target type.
+        
+        Args:
+            matrix: Input matrix
+            node_type: Target matrix type
+            
+        Returns:
+            float: Energy similarity score between 0 and 1
+        """
+        if isinstance(matrix, torch.Tensor):
+            matrix_np = matrix.detach().cpu().numpy()
+        else:
+            matrix_np = matrix
+        
+        # Get matrix energy (Frobenius norm)
+        matrix_energy = np.linalg.norm(matrix_np)
+        
+        # Get reference energy for this matrix type
+        if node_type in self.matrix_graph:
+            # Create a reference matrix to get typical energy
+            reference_matrix = self._create_reference_matrix(node_type, matrix_np.shape)
+            reference_energy = np.linalg.norm(reference_matrix)
+        else:
+            reference_energy = 1.0  # Default reference
+        
+        # Calculate energy similarity (inverse of relative difference)
+        if max(matrix_energy, reference_energy) > 1e-10:
+            energy_diff = abs(matrix_energy - reference_energy) / max(matrix_energy, reference_energy)
+            energy_similarity = 1.0 - min(1.0, energy_diff)
+        else:
+            energy_similarity = 1.0  # Both are zero energy
+        
+        return energy_similarity
+
+
+    def _calculate_structural_similarity(self, matrix, node_type):
+        """Calculate structural similarity between matrix and target type"""
+        if isinstance(matrix, torch.Tensor):
+            matrix_np = matrix.detach().numpy()
+        else:
+            matrix_np = matrix
+        
+        # Get reference matrix for this node type
+        if node_type in self.matrix_graph:
+            # Create a reference matrix of this type
+            reference_matrix = self._create_reference_matrix(node_type, matrix_np.shape)
+        else:
+            return 0.5  # Default similarity
+        
+        # Use existing _compare_matrix_structures method
+        return self._compare_matrix_structures(matrix_np, reference_matrix)
+
+    def _create_reference_matrix(self, matrix_type, shape):
+        """Create a reference matrix of the specified type and shape"""
+        # Create base matrix
+        base_matrix = np.random.randn(*shape)
+        
+        # Apply transformation rules to create the reference type
+        transform_method = self._get_transform_method(matrix_type)
+        if transform_method:
+            return transform_method(base_matrix)
+        else:
+            return base_matrix
+        
+    def _calculate_energy_similarity(self, matrix, node_type):
+        """Calculate energy/norm similarity between matrix and target type"""
+        if isinstance(matrix, torch.Tensor):
+            matrix_np = matrix.detach().cpu().numpy()
+        else:
+            matrix_np = matrix
+        
+        # Get matrix energy
+        matrix_energy = np.linalg.norm(matrix_np)
+        
+        # Get reference energy for this matrix type using the better method
+        if node_type in self.matrix_graph:
+            try:
+                # Use _create_reference_matrix with the actual matrix shape
+                reference_matrix = self._create_reference_matrix(node_type, matrix_np.shape)
+                reference_energy = np.linalg.norm(reference_matrix)
+            except Exception:
+                # Fallback to default if creation fails
+                reference_energy = 1.0
+        else:
+            reference_energy = 1.0  # Default reference
+        
+        # Calculate energy similarity (inverse of relative difference)
+        if max(matrix_energy, reference_energy) > 1e-10:
+            energy_diff = abs(matrix_energy - reference_energy) / max(matrix_energy, reference_energy)
+            energy_similarity = 1.0 - min(1.0, energy_diff)
+        else:
+            energy_similarity = 1.0  # Both are zero energy
+        
+        return energy_similarity
+
     def _calculate_graph_distance(self, type1, type2):
         """Calculate distance between two matrix types in the graph"""
         if type1 == type2:
@@ -3877,7 +4298,7 @@ class MatrixTransformer:
                     result[i, i+k] = diag_val
                     if k > 0:  # Fill the symmetric part for k > 0
                         result[i+k, i] = diag_val
-        else:
+        elif matrix_np.ndim == 2:
             # Original 2D matrix handling
             rows, cols = matrix_np.shape
             result = np.zeros_like(matrix_np)
@@ -3896,6 +4317,38 @@ class MatrixTransformer:
                     # Fill the diagonal with the average value
                     for i in range(max(0, -k), min(rows, cols-k)):
                         result[i, i+k] = diag_avg
+        else:
+            # Handle higher dimensional arrays by processing first 2D slice
+            first_slice = matrix_np[0] if matrix_np.shape[0] > 0 else matrix_np.reshape(matrix_np.shape[1:])
+            
+            # Apply toeplitz transformation to the 2D slice
+            if first_slice.ndim >= 2:
+                rows, cols = first_slice.shape[:2]
+                toeplitz_slice = np.zeros_like(first_slice)
+                
+                # Average along diagonals for the first 2D slice
+                for k in range(-(rows-1), cols):
+                    diag_sum = 0
+                    diag_count = 0
+                    for i in range(max(0, -k), min(rows, cols-k)):
+                        diag_sum += first_slice[i, i+k]
+                        diag_count += 1
+                    
+                    if diag_count > 0:
+                        diag_avg = diag_sum / diag_count
+                        
+                        # Fill the diagonal with the average value
+                        for i in range(max(0, -k), min(rows, cols-k)):
+                            toeplitz_slice[i, i+k] = diag_avg
+                
+                # Create result with same shape as input
+                result = np.zeros_like(matrix_np)
+                # Apply the toeplitz pattern to all slices
+                for i in range(matrix_np.shape[0]):
+                    result[i] = toeplitz_slice
+            else:
+                # For other cases, return original
+                result = matrix_np.copy()
         
         # Convert back to torch tensor if input was tensor
         if is_torch:
@@ -4448,6 +4901,18 @@ class MatrixTransformer:
             return
         
         alpha = 0.8  # Smoothing factor
+
+        # FIX: Properly handle matrix size calculation for torch tensors
+        matrix_size = 0
+        if isinstance(matrix, torch.Tensor):
+            matrix_size = matrix.numel()  # Get total number of elements for tensor
+        elif hasattr(matrix, 'size'):
+            if callable(matrix.size):
+                matrix_size = matrix.size()
+            else:
+                matrix_size = matrix.size
+        elif hasattr(matrix, 'shape'):
+            matrix_size = np.prod(matrix.shape)
         
         # Process attention scores efficiently
         if attention_scores:
@@ -4481,7 +4946,6 @@ class MatrixTransformer:
         stability = 1.0 - min(1.0, 2.0 * score_variance)  # Lower variance = higher stability
         
         # Optimize coherence calculation based on matrix size
-        matrix_size = getattr(matrix, 'size', 0)
         if matrix_size > 10000 and time_delta < 0.05:
             # Quick approximation for large matrices with small updates
             if hasattr(matrix, 'flatten'):
@@ -4549,6 +5013,72 @@ class MatrixTransformer:
             
         self.quantum_field['phase_coherence'] = alpha * self.quantum_field['phase_coherence'] + \
             (1 - alpha) * (0.7 * stability + 0.3 * eigenvalue_coherence)
+
+    def _calculate_graph_attention(self, matrix, node_types=None):
+        """Calculate attention scores between matrix and different matrix types"""
+        # Handle empty matrices
+        if isinstance(matrix, np.ndarray) and matrix.size == 0:
+            # Return default scores for empty matrices
+            return {node_type: 0.5 for node_type in (node_types or self.matrix_graph.keys())}
+
+        # If no node types specified, use all matrix types
+        node_types = node_types or list(self.matrix_graph.keys())
+        
+        # Initialize attention scores
+        attention_scores = {}
+        
+        # Detect the type of input matrix
+        input_type = self._detect_matrix_type(matrix)
+        
+        # Calculate raw scores for each node type
+        raw_scores = {}
+        total_score = 0.0
+        
+        for node_type in node_types:
+            # Component 1: Graph Distance (topology-based similarity)
+            if input_type == node_type:
+                base_score = 1.0
+            elif input_type in self.matrix_graph and node_type in self.matrix_graph[input_type]['neighbors']:
+                base_score = 0.7  # Neighbor
+            else:
+                # Calculate graph distance
+                distance = self._calculate_graph_distance(input_type, node_type)
+                base_score = max(0.1, 1.0 - 0.2 * distance)
+            
+            # Component 2: Property Similarity (Euclidean in 16D property space)
+            property_score = self._calculate_property_similarity(matrix, node_type)
+            
+            # Component 3: Transformation Coherence
+            coherence_score = self._calculate_transformation_coherence(matrix, node_type)
+            
+            # Component 4: Structural Similarity
+            structural_score = self._calculate_structural_similarity(matrix, node_type)
+            
+            # Component 5: Energy/Norm Distance
+            energy_score = self._calculate_energy_similarity(matrix, node_type)
+            
+            # Complete weighted combination with all 5 components
+            raw_score = (
+                0.20 * base_score +        # Graph distance (topology)
+                0.30 * property_score +    # Property similarity (16D Euclidean)
+                0.20 * coherence_score +   # Transformation coherence
+                0.15 * structural_score +  # Structural similarity
+                0.15 * energy_score        # Energy/norm distance
+            )
+            
+            raw_scores[node_type] = raw_score
+            total_score += raw_score
+        
+        # FIX: Normalize scores to sum to 1.0
+        if total_score > 0:
+            for node_type in node_types:
+                attention_scores[node_type] = raw_scores[node_type] / total_score
+        else:
+            # If all scores are 0, use uniform distribution
+            uniform_score = 1.0 / len(node_types)
+            attention_scores = {node_type: uniform_score for node_type in node_types}
+        
+        return attention_scores
     
   
     def _traverse_graph(self, matrix, source_type=None, recent_matrices=None):
@@ -4598,8 +5128,6 @@ class MatrixTransformer:
                         path.extend(valid_steps)
                         current_type = target_type
                         visited.add(target_type)
-        
-        # Rest of the method remains unchanged...
         
         # 6. Use clustering information if available
         if len(self.matrices) > 0 and len(self.layer_info) > 0:
@@ -4668,8 +5196,24 @@ class MatrixTransformer:
         # 7. Ensure all steps in path are valid matrix types
         final_path = [step for step in path if step in self.matrix_graph]
         
-        return final_path, attention_scores
+        # 8. Prepare structure metadata
+        structure_metadata = {
+            'source_type': source_type,
+            'matrix_structure': matrix_structure,
+            'visited_types': list(visited),
+            'top_scoring_types': sorted_types[:top_k],
+            'cluster_info': {
+                'closest_cluster': closest_cluster if 'closest_cluster' in locals() else None,
+                'max_similarity': max_similarity if 'max_similarity' in locals() else 0.0
+            }
+        }
         
+        # 9. Update quantum field based on graph traversal
+        if hasattr(self, '_update_quantum_field'):
+            self._update_quantum_field(matrix, attention_scores, time_delta=0.03)
+        
+        return final_path, attention_scores, structure_metadata
+
     def _compare_matrix_structures(self, matrix1, matrix2):
         """
         Compare two matrices based on their structural properties.
@@ -4968,128 +5512,371 @@ class MatrixTransformer:
         
         return result.astype(original_dtype)
     
-    
-    def find_hyperdimensional_connections(self, num_dims=8):
+    def _generate_matrix_coordinates(self, matrix, matrix_idx):
         """
-        Find connections in hyperdimensional space between matrices.
-        Uses tensor projections for higher dimensional matrices.
+        Generate meaningful 3D coordinates from matrix structural properties.
         
         Args:
-            num_dims: Number of dimensions to use for hyperdimensional space
+            matrix: Input matrix
+            matrix_idx: Index of matrix in the collection
             
         Returns:
-            Dictionary of connections between indices
+            np.array: 3D coordinates representing matrix position
         """
+        # Convert to numpy for processing
+        if isinstance(matrix, torch.Tensor):
+            matrix_np = matrix.detach().cpu().numpy()
+        else:
+            matrix_np = matrix
+        
+        # Check if matrix is sparse and convert to dense for analysis if needed
+        is_sparse = hasattr(matrix_np, 'todense') or hasattr(matrix_np, 'toarray')
+        if is_sparse:
+            # Use small sample for large sparse matrices
+            if hasattr(matrix_np, 'shape') and matrix_np.shape[0] > 1000:
+                # Process a sample for large matrices
+                sample_size = min(1000, matrix_np.shape[0])
+                if hasattr(matrix_np, 'todense'):
+                    sample = matrix_np[:sample_size, :sample_size].todense()
+                else:
+                    sample = matrix_np[:sample_size, :sample_size].toarray()
+                matrix_np = sample
+            else:
+                # Convert entire matrix for smaller matrices
+                if hasattr(matrix_np, 'todense'):
+                    matrix_np = matrix_np.todense()
+                else:
+                    matrix_np = matrix_np.toarray()
+        
+        # Method 1: Use matrix type + properties for coordinates
+        matrix_type = self._detect_matrix_type(matrix_np)
+        type_coords = self._matrix_type_to_coordinates(matrix_type)
+        
+        # Method 2: Use structural properties
+        properties = self.derive_property_values(matrix_np)
+        
+        # Method 3: Use hypercube embedding
+        if matrix_type in self.cube:
+            hypercube_coords = self.cube[matrix_type]['sphere_embedding']
+        else:
+            hypercube_coords = np.array([0.5, 0.5, 0.5])
+        
+        # Combine multiple coordinate systems for rich representation
+        coords = np.zeros(3)
+        
+        # X-coordinate: Structural complexity (eigenvalue spread)
+        if matrix_np.ndim == 2 and matrix_np.shape[0] == matrix_np.shape[1]:
+            try:
+                eigenvals = np.linalg.eigvals(matrix_np)
+                # Use eigenvalue spread as complexity measure
+                coords[0] = np.std(np.abs(eigenvals)) / (np.mean(np.abs(eigenvals)) + 1e-10)
+            except:
+                coords[0] = properties.get('sparsity', 0.5)
+        else:
+            coords[0] = properties.get('sparsity', 0.5)
+        
+        # Y-coordinate: Matrix type signature
+        type_signatures = {
+            'diagonal': 0.1, 'symmetric': 0.2, 'hermitian': 0.3,
+            'upper_triangular': 0.4, 'lower_triangular': 0.5,
+            'sparse': 0.6, 'toeplitz': 0.7, 'circulant': 0.8,
+            'positive_definite': 0.9, 'general': 0.5
+        }
+        coords[1] = type_signatures.get(matrix_type, 0.5)
+        
+        # Z-coordinate: Energy density + type-specific property
+        energy_density = np.linalg.norm(matrix_np) / np.sqrt(matrix_np.size)
+        type_property = properties.get('diagonal_only', 0) if matrix_type == 'diagonal' else \
+                    properties.get('symmetric', 0) if matrix_type == 'symmetric' else \
+                    properties.get('positive_eigenvalues', 0) if matrix_type == 'positive_definite' else \
+                    0.5
+        
+        coords[2] = 0.7 * energy_density + 0.3 * type_property
+        
+        # Add small perturbation based on matrix index to avoid exact overlaps
+        perturbation = np.array([
+            0.01 * np.sin(2 * np.pi * matrix_idx / 37),
+            0.01 * np.cos(2 * np.pi * matrix_idx / 41),
+            0.01 * np.sin(2 * np.pi * matrix_idx / 43)
+        ])
+        coords += perturbation
+        
+        # Normalize to reasonable range [0, 1]
+        coords = np.clip(coords, 0, 1)
+        
+        return coords
+
+    def _generate_graph_based_coordinates(self, matrix, matrix_idx):
+        """
+        Generate coordinates based on position in the matrix type graph.
+        Works with both matrices and higher-dimensional tensors.
+        
+        Args:
+            matrix: Input matrix or tensor
+            matrix_idx: Index of matrix in the collection
+            
+        Returns:
+            np.array: 3D coordinates representing position
+        """
+        # Convert torch tensor to numpy if needed
+        if isinstance(matrix, torch.Tensor):
+            matrix_np = matrix.detach().cpu().numpy()
+        else:
+            matrix_np = matrix
+        
+        # Handle tensor inputs by projecting to 2D matrix space first
+        original_ndim = matrix_np.ndim
+        matrix_2d = matrix_np
+        tensor_metadata = None
+        
+        if original_ndim > 2:
+            # Use tensor_to_matrix to get 2D representation for processing
+            matrix_2d, tensor_metadata = self.tensor_to_matrix(matrix_np)
+        
+        # Detect type based on the 2D representation
+        matrix_type = self._detect_matrix_type(matrix_2d)
+        
+        # Use graph embedding techniques
+        if hasattr(self, 'hypercube_graph'):
+            # Get position in hypercube
+            coords = self._matrix_type_to_coordinates(matrix_type)
+            
+            # Project to 3D using first 3 dimensions
+            base_coords = np.array(coords[:3]) if len(coords) >= 3 else np.array([0.5, 0.5, 0.5])
+            
+            # Add graph-based refinement
+            neighbors = self.matrix_graph.get(matrix_type, {}).get('neighbors', [])
+            neighbor_influence = len(neighbors) / 10.0  # Normalize by typical max neighbors
+            
+            # Adjust coordinates based on graph connectivity
+            graph_coords = base_coords.copy()
+            graph_coords[0] += 0.1 * neighbor_influence  # Connectivity affects X
+            
+            # Add matrix-specific properties
+            properties = self.derive_property_values(matrix_2d)
+            graph_coords[1] += 0.1 * properties.get('sparsity', 0)
+            graph_coords[2] += 0.1 * properties.get('symmetric', 0)  # Note: fixed property name
+            
+            # Add tensor-specific positioning for higher dimensional data
+            if original_ndim > 2:
+                # Use tensor properties to influence coordinates
+                if tensor_metadata:
+                    # Extract tensor dimensionality information
+                    tensor_shape = tensor_metadata.get(id(matrix_np), {}).get('original_shape')
+                    if tensor_shape:
+                        # Use dimension ratios to adjust coordinates
+                        dim_ratio = tensor_shape[0] / max(sum(tensor_shape), 1) 
+                        graph_coords[2] += 0.15 * dim_ratio  # Higher dimensions push up in Z
+                    
+                    # Extract encoding type to influence coordinates
+                    encoding_type = tensor_metadata.get(id(matrix_np), {}).get('encoding_type')
+                    if encoding_type:
+                        # Different tensor types get different coordinate adjustments
+                        if encoding_type == '3D_grid':
+                            graph_coords[0] += 0.1  # Push right for 3D grids
+                        elif encoding_type == '4D_structured':
+                            graph_coords[1] += 0.1  # Push forward for 4D tensors
+                        elif encoding_type == 'ND_projection':
+                            graph_coords[2] += 0.2  # Push up for higher-D projections
+            
+            return np.clip(graph_coords, 0, 1)
+        
+        # Fallback to property-based coordinates
+        return self._generate_matrix_coordinates(matrix, matrix_idx)
+    
+    def find_hyperdimensional_connections(self, num_dims=8):
+        """Find connections in hyperdimensional space between matrices and tensors."""
         logging.info(f"Finding hyperdimensional connections in {num_dims}D space...")
         
-        # Get indices from the system
-        try:
-            indices = list(self.system.data)
-            coords3d = np.array([self.system.data[i]["coordinates"] for i in indices])
-        except (AttributeError, KeyError):
-            logging.warning("No data available or system not properly initialized")
+        # Use MatrixTransformer's internal storage
+        if not hasattr(self, 'matrices') or not self.matrices:
+            logging.warning("No matrices available in MatrixTransformer")
             return {}
+        
+        # Create indices and coordinates from internal matrices/tensors
+        indices = list(range(len(self.matrices)))
+        
+        # Generate coordinates for each matrix/tensor
+        coords3d = []
+        for i, matrix in enumerate(self.matrices):
+            # Handle sparse matrices
+            if hasattr(matrix, 'toarray') or hasattr(matrix, 'todense'):
+                # For sparse matrices, we'll use the structure not the full content
+                try:
+                    coord = self._generate_matrix_coordinates(matrix, i)
+                    coords3d.append(coord)
+                except Exception as e:
+                    print(f"Warning: Could not generate coordinates for sparse matrix {i}: {e}")
+                    # Use random coordinates as fallback
+                    coords3d.append(np.random.rand(3))
+            else:
+                # Regular processing for dense matrices
+                if isinstance(matrix, torch.Tensor):
+                    matrix_np = matrix.detach().cpu().numpy()
+                else:
+                    matrix_np = matrix
+                    
+                # Choose appropriate coordinate generation method based on dimensionality
+                if matrix_np.ndim > 2:
+                    # Use graph-based coordinates with tensor awareness
+                    coords = self._generate_graph_based_coordinates(matrix_np, i)
+                else:
+                    # For regular matrices, use the existing coordinates generator
+                    coords = self._generate_matrix_coordinates(matrix_np, i)
+                    
+                coords3d.append(coords)
+        
+        coords3d = np.array(coords3d)
         
         if not indices:
             logging.warning("No connections available to find")
             return {}
 
-        # Extract features for each matrix
+        # Extract features for each matrix - optimize memory usage
         features = []
-        for idx in indices:
-            try:
-                # Get matrix from the system
-                mat = self.system.matrix_space.matrices[idx]
-                
-                # Project to hypersphere with enhanced method
-                if hasattr(self.system.matrix_space, '_project_to_hypersphere'):
-                    proj = self.system.matrix_space._project_to_hypersphere(mat, radius=1.0)
-                else:
-                    # Fallback to our own implementation
-                    proj = self._project_to_hypersphere(mat, radius=1.0)
-                
-                # Extract feature vector of specified dimension
-                if proj.ndim == 1 and proj.size == num_dims:
-                    vec = proj
-                else:
-                    # Convert to feature vector
-                    if proj.ndim > 2:
-                        flat_proj, _ = self.tensor_to_matrix(proj)
-                        vec = flat_proj.flatten()
-                    else:
-                        vec = proj.flatten()
+        batch_size = 100  # Process matrices in batches
+        
+        for i in range(0, len(indices), batch_size):
+            batch_indices = indices[i:min(i + batch_size, len(indices))]
+            batch_features = []
+            
+            for idx in batch_indices:
+                try:
+                    # Get matrix directly from MatrixTransformer's internal storage
+                    mat = self.matrices[idx]
                     
-                    # Adjust dimensions
-                    if vec.size < num_dims:
-                        vec = np.pad(vec, (0, num_dims - vec.size), mode="constant")
-                    vec = vec[:num_dims]
-                
-                features.append(vec)
-            except Exception as e:
-                logging.error(f"Error processing matrix {idx}: {e}")
-                # Add zeros vector as fallback
-                features.append(np.zeros(num_dims))
+                    # Handle sparse matrices by converting to dense if needed
+                    if hasattr(mat, 'toarray'):
+                        mat = mat.toarray()
+                    elif hasattr(mat, 'todense'):
+                        mat = mat.todense()
+                    
+                    # Convert torch tensor to numpy if needed
+                    if isinstance(mat, torch.Tensor):
+                        mat = mat.detach().cpu().numpy()
+                    
+                    # Ensure mat is at least 2D
+                    if mat.ndim == 0:
+                        mat = np.array([[float(mat)]])
+                    elif mat.ndim == 1:
+                        mat = mat.reshape(-1, 1)
+                    
+                    # Handle tensors properly
+                    if mat.ndim > 2:
+                        # For tensors, use tensor_to_matrix to get 2D representation
+                        mat_2d, _ = self.tensor_to_matrix(mat)
+                        # Project the 2D representation to hypersphere
+                        proj = self._project_to_hypersphere(mat_2d, radius=1.0, preserve_type=False)
+                    else:
+                        # For matrices, project directly
+                        proj = self._project_to_hypersphere(mat, radius=1.0, preserve_type=False)
+                    
+                    # Extract key statistical features efficiently from the projected matrix
+                    feature_vector = []
+                    
+                    # Use projected matrix for feature extraction
+                    proj_flat = proj.flatten() if hasattr(proj, 'flatten') else np.array([proj]).flatten()
+                    
+                    # Basic shape features (normalized)
+                    feature_vector.extend([
+                        proj.shape[0] / 10.0 if hasattr(proj, 'shape') else 1.0,
+                        proj.shape[1] / 10.0 if hasattr(proj, 'shape') and len(proj.shape) > 1 else 1.0,
+                        len(np.unique(proj_flat)) / 10.0
+                    ])
+                    
+                    # Statistical features (normalized) from projected matrix
+                    max_val = np.max(np.abs(proj_flat)) if proj_flat.size > 0 else 1.0
+                    feature_vector.extend([
+                        np.mean(proj_flat) / max_val if max_val > 0 else 0,
+                        np.std(proj_flat) / max_val if max_val > 0 else 0,
+                        np.median(proj_flat) / max_val if max_val > 0 else 0
+                    ])
+                    
+                    # Additional hypersphere-specific features
+                    if hasattr(proj, 'shape') and len(proj.shape) >= 2:
+                        # Matrix coherence on projected matrix
+                        coherence = self.calculate_matrix_coherence(proj)
+                        feature_vector.append(coherence)
+                        
+                        # Energy density after projection (should be close to 1.0 due to normalization)
+                        energy_density = np.linalg.norm(proj) / np.sqrt(proj.size)
+                        feature_vector.append(energy_density)
+                    else:
+                        feature_vector.extend([0.5, 1.0])  # Default values
+                    
+                    # Ensure exactly num_dims features
+                    if len(feature_vector) < num_dims:
+                        feature_vector.extend([0.0] * (num_dims - len(feature_vector)))
+                    feature_vector = feature_vector[:num_dims]
+                    
+                    batch_features.append(feature_vector)
+                    
+                except Exception as e:
+                    logging.error(f"Error processing matrix {idx}: {e}")
+                    batch_features.append(np.zeros(num_dims))
+            
+            features.extend(batch_features)
         
-        # Normalize features to unit length
-        features = np.vstack(features)
-        norms = np.linalg.norm(features, axis=1, keepdims=True) + 1e-12
-        features /= norms
+        # Convert to numpy array and normalize
+        features = np.array(features, dtype=np.float64)
         
-        # MEMORY-EFFICIENT APPROACH: Use KNN instead of full distance matrix
-        logging.info(f"Computing nearest neighbors for {len(features)} points in {num_dims}D space...")
+        # Add small epsilon to prevent division by zero
+        eps = 1e-10
+        norms = np.linalg.norm(features, axis=1)[:, np.newaxis] + eps
+        features = features / norms
         
-        # Find connections using batch processing to avoid memory issues
-        conns = {}
-        batch_size = 1000  # Process in batches to save memory
+        # Find connections using efficient batch processing
+        connections = {}
+        batch_size = min(1000, len(indices))  # Adjust batch size based on data size
         
-        # Use scikit-learn's NearestNeighbors which is more memory efficient
-        from sklearn.neighbors import NearestNeighbors
-        n_neighbors = min(6, len(features))  # Get 5 neighbors (plus self)
-        
-        # Process in batches for large datasets
         for i in range(0, len(indices), batch_size):
             batch_end = min(i + batch_size, len(indices))
-            batch_indices = indices[i:batch_end]
             batch_features = features[i:batch_end]
+            batch_indices = indices[i:batch_end]
             
-            # Find nearest neighbors for this batch
-            knn = NearestNeighbors(n_neighbors=n_neighbors, algorithm='auto', metric='euclidean')
-            knn.fit(features)
-            distances, neighbors = knn.kneighbors(batch_features)
+            # Calculate similarities for this batch efficiently
+            similarities = np.dot(batch_features, features.T)
             
-            # Process results for this batch
-            for j, (dists, neighs) in enumerate(zip(distances, neighbors)):
-                idx = batch_indices[j]
+            # Process similarities in this batch
+            for batch_idx, src_idx in enumerate(batch_indices):
+                targets = []
+                similarity_row = similarities[batch_idx]
                 
-                # Skip the first neighbor (always self)
-                lst = []
-                for k in range(1, len(neighs)):
-                    neigh_idx = indices[neighs[k]]
-                    hd = dists[k]
-                    phys = np.linalg.norm(coords3d[i+j] - coords3d[neighs[k]])
-                    ratio = phys / (hd + 1e-10)
-                    
-                    # Only include significant connections
-                    if ratio > 10:
-                        lst.append({
-                            "target_idx": neigh_idx,
-                            "high_dim_dist": float(hd),
-                            "physical_dist": float(phys),
-                            "ratio": float(ratio),
-                            "strength": 1.0 / (hd + 0.1)
-                        })
+                # Find significant connections
+                significant_indices = np.where(similarity_row > 0.5)[0]
                 
-                if lst:
-                    conns[idx] = sorted(lst, key=lambda x: x["strength"], reverse=True)
+                for tgt_idx in significant_indices:
+                    if tgt_idx != batch_idx + i:  # Skip self-connections
+                        # Calculate physical distance using generated coordinates
+                        phys_dist = np.linalg.norm(coords3d[i + batch_idx] - coords3d[tgt_idx])
+                        hd_dist = np.sqrt(2 * (1 - similarity_row[tgt_idx]))
+                        
+                        # Calculate ratio
+                        ratio = phys_dist / (hd_dist + eps)
+                        
+                        # Find dimensions that contributed most to the similarity
+                        significant_dimensions = np.argsort(np.abs(features[i + batch_idx] - features[tgt_idx]))[-3:]
+                        
+                        # Only include if ratio exceeds threshold
+                        if ratio > 10:
+                            targets.append({
+                                "target_idx": indices[tgt_idx],
+                                "high_dim_dist": float(hd_dist),
+                                "physical_dist": float(phys_dist),
+                                "ratio": float(ratio),
+                                "strength": float(similarity_row[tgt_idx]),
+                                "dimensions": significant_dimensions.tolist()
+                            })
+                
+                if targets:
+                    connections[src_idx] = sorted(targets, key=lambda x: x["strength"], reverse=True)[:5]
         
-        # Store results on analyzer (and optionally propagate back)
-        self.hyperdimensional_connections = conns
-        if hasattr(self, 'system'):
-            self.system.hyperdimensional_connections = conns
+        # Store results in MatrixTransformer's own attributes
+        self.hyperdimensional_connections = connections
 
-        logging.info(f"Found hyperdimensional connections for {len(conns)} bodies")
-        return conns
-                
+        logging.info(f"Found hyperdimensional connections for {len(connections)} matrices")
+        return connections
+                                    
 
     def connections_to_matrix(self, connections, coords3d=None, indices=None, matrix_type=None):
         """
@@ -6032,155 +6819,405 @@ class MatrixTransformer:
         space for more robust pattern detection across different matrix types.
         
         Args:
-            query: Query matrix
-            key: Key matrix or list of matrices
-            value: Value matrix or list of matrices
+            query: Query matrix/tensor
+            key: Key matrix/tensor or list of matrices/tensors
+            value: Value matrix/tensor or list of matrices/tensors
             num_dims: Number of dimensions for hyperdimensional space
             
         Returns:
-            Attended output matrix
+            tuple: (Attended output matrix/tensor, attention_weights)
         """
-        # 1. Hyperdimensional Projection Layer
-        # Project query and keys to hypersphere to normalize while preserving structure
-        query_proj = self._project_to_hypersphere(query, radius=1.0)
-        
-        # Handle single vs multiple key/value pairs
-        if not isinstance(key, list):
-            key = [key]
-            value = [value]
-        
-        key_projs = [self._project_to_hypersphere(k, radius=1.0) for k in key]
-        
-        # 2. Connection Discovery Engine
-        # Create a dictionary of matrices to find connections between
-        matrices_dict = {'q': query_proj}
-        for i, k in enumerate(key_projs):
-            matrices_dict[f'k{i}'] = k
-        
-        # Find connections in high-dimensional space
-        connections = {}
-        
-        # Modified version of find_hyperdimensional_connections for direct input matrices
-        for src_idx, src_matrix in matrices_dict.items():
-            connections[src_idx] = []
+        try:
+            # Input validation and preprocessing
+            if query is None:
+                raise ValueError("Query cannot be None")
             
-            # Extract feature vector for hyperdimensional comparison
-            src_feat = self._extract_feature_vector(src_matrix, num_dims)
+            # Convert torch tensors to numpy for processing
+            original_is_tensor = isinstance(query, torch.Tensor)
+            original_device = query.device if original_is_tensor else None
+            original_dtype = query.dtype if original_is_tensor else None
             
-            for tgt_idx, tgt_matrix in matrices_dict.items():
-                if src_idx == tgt_idx:
+            if original_is_tensor:
+                query_np = query.detach().cpu().numpy()
+            else:
+                query_np = query.copy() if hasattr(query, 'copy') else np.array(query)
+            
+            # Handle empty or invalid query
+            if query_np.size == 0:
+                return query_np.copy(), []
+            
+            # 1. Hyperdimensional Projection Layer
+            try:
+                query_proj = self._project_to_hypersphere(query_np, radius=1.0, preserve_type=False)
+            except Exception as e:
+                logging.warning(f"Query projection failed: {e}, using original")
+                query_proj = query_np.copy()
+            
+            # Handle single vs multiple key/value pairs with validation
+            if key is None:
+                key = [query_np]
+                value = [query_np]
+            elif not isinstance(key, list):
+                key = [key]
+                if not isinstance(value, list):
+                    value = [value]
+                else:
+                    # Ensure value list matches key list length
+                    if len(value) != len(key):
+                        value = [value[0] if value else query_np] * len(key)
+            else:
+                if not isinstance(value, list):
+                    value = [value] * len(key)
+                elif len(value) != len(key):
+                    # Pad or truncate value list to match key list
+                    if len(value) < len(key):
+                        value.extend([value[-1] if value else query_np] * (len(key) - len(value)))
+                    else:
+                        value = value[:len(key)]
+            
+            # Convert key/value tensors to numpy and project to hypersphere
+            key_projs = []
+            value_arrays = []
+            
+            for k, v in zip(key, value):
+                try:
+                    # Skip None key/value pairs
+                    if k is None or v is None:
+                        continue
+                        
+                    # Convert key to numpy
+                    if isinstance(k, torch.Tensor):
+                        k_np = k.detach().cpu().numpy()
+                    else:
+                        k_np = k.copy() if hasattr(k, 'copy') else np.array(k)
+                    
+                    # Convert value to numpy  
+                    if isinstance(v, torch.Tensor):
+                        v_np = v.detach().cpu().numpy()
+                    else:
+                        v_np = v.copy() if hasattr(v, 'copy') else np.array(v)
+                    
+                    # Project key to hypersphere
+                    if k_np.size > 0:
+                        k_proj = self._project_to_hypersphere(k_np, radius=1.0, preserve_type=False)
+                        key_projs.append(k_proj)
+                        value_arrays.append(v_np)
+                    
+                except Exception as e:
+                    logging.warning(f"Failed to process key/value pair: {e}")
+                    continue
+            
+            # Ensure we have at least one valid key/value pair
+            if not key_projs:
+                logging.warning("No valid key/value pairs, returning query")
+                return query_np.copy(), [1.0]
+            
+            # Rest of the method remains the same...
+            # 2. Connection Discovery Engine
+            matrices_dict = {'q': query_proj}
+            for i, k in enumerate(key_projs):
+                matrices_dict[f'k{i}'] = k
+            
+            connections = {}
+            
+            # Find connections in high-dimensional space with error handling
+            for src_idx, src_matrix in matrices_dict.items():
+                connections[src_idx] = []
+                
+                try:
+                    # Extract feature vector for hyperdimensional comparison
+                    src_feat = self._extract_feature_vector(src_matrix, num_dims)
+                    
+                    for tgt_idx, tgt_matrix in matrices_dict.items():
+                        if src_idx == tgt_idx:
+                            continue
+                        
+                        try:
+                            # Extract target feature vector
+                            tgt_feat = self._extract_feature_vector(tgt_matrix, num_dims)
+                            
+                            # Calculate high-dimensional distance
+                            high_dim_dist = np.linalg.norm(src_feat - tgt_feat)
+                            
+                            # Calculate physical distance as energy difference
+                            physical_dist = abs(np.linalg.norm(src_matrix) - np.linalg.norm(tgt_matrix))
+                            
+                            # Calculate attention strength (inverse of distance with stability)
+                            strength = 1.0 / (high_dim_dist + 0.1)
+                            
+                            # Only record significant connections
+                            if strength > 0.1:
+                                connections[src_idx].append({
+                                    "target_idx": tgt_idx,
+                                    "high_dim_dist": float(high_dim_dist),
+                                    "physical_dist": float(physical_dist),
+                                    "ratio": float(physical_dist / (high_dim_dist + 1e-10)),
+                                    "strength": float(strength)
+                                })
+                        except Exception as e:
+                            logging.warning(f"Failed to compute connection {src_idx}->{tgt_idx}: {e}")
+                            continue
+                            
+                except Exception as e:
+                    logging.warning(f"Failed to process source {src_idx}: {e}")
+                    continue
+            
+            # 3. Dimensional Translation Layer with fallback
+            try:
+                indices = list(matrices_dict.keys())
+                conn_matrix, metadata = self.connections_to_matrix(connections, indices=indices)
+                
+                # Convert to dense matrix for attention computation
+                if hasattr(conn_matrix, "toarray"):
+                    attention_matrix = conn_matrix.toarray()
+                else:
+                    attention_matrix = conn_matrix
+                
+                # Extract attention weights from query to keys
+                q_idx = indices.index('q')
+                attention_weights = []
+                
+                for i in range(len(key_projs)):
+                    try:
+                        k_idx = indices.index(f'k{i}')
+                        if q_idx < attention_matrix.shape[0] and k_idx < attention_matrix.shape[1]:
+                            attention_weights.append(attention_matrix[q_idx, k_idx])
+                        else:
+                            attention_weights.append(0.1)  # Default low attention
+                    except (ValueError, IndexError):
+                        attention_weights.append(0.1)  # Default for missing connections
+                
+            except Exception as e:
+                logging.warning(f"Connection matrix processing failed: {e}, using uniform weights")
+                attention_weights = [1.0] * len(key_projs)
+            
+            # Ensure we have weights for each key
+            if len(attention_weights) != len(key_projs):
+                attention_weights = [1.0] * len(key_projs)
+            
+            # Normalize weights using softmax with numerical stability
+            try:
+                attention_weights = np.array(attention_weights)
+                # Subtract max for numerical stability
+                attention_weights = attention_weights - np.max(attention_weights)
+                weights_exp = np.exp(attention_weights)
+                weights_sum = np.sum(weights_exp)
+                
+                if weights_sum > 1e-10:
+                    normalized_weights = weights_exp / weights_sum
+                else:
+                    normalized_weights = np.ones_like(weights_exp) / len(weights_exp)
+            except Exception as e:
+                logging.warning(f"Weight normalization failed: {e}, using uniform weights")
+                normalized_weights = np.ones(len(key_projs)) / len(key_projs)
+            
+            # 4. Value Processing and Aggregation
+            query_type = self._detect_matrix_type(query_np)
+            target_shape = query_np.shape
+            
+            # Process values with comprehensive shape handling
+            processed_values = []
+            
+            for i, v in enumerate(value_arrays):
+                try:
+                    # Handle shape differences using tensor conversion if needed
+                    if v.shape != target_shape:
+                        if hasattr(self, 'tensor_to_matrix') and hasattr(self, 'matrix_to_tensor'):
+                            try:
+                                # Use tensor conversion pipeline for complex shape differences
+                                query_2d, tensor_metadata = self.tensor_to_matrix(query_np)
+                                v_2d, _ = self.tensor_to_matrix(v)
+                                
+                                # Apply transformation
+                                transform_method = self._get_transform_method(query_type)
+                                if transform_method is not None:
+                                    v_transformed = transform_method(v_2d)
+                                else:
+                                    v_transformed = v_2d.copy()
+                                
+                                # Convert back to target shape
+                                v_processed = self.matrix_to_tensor(v_transformed, tensor_metadata, 
+                                                                original_shape=target_shape)
+                                processed_values.append(v_processed)
+                                
+                            except Exception as e:
+                                logging.warning(f"Tensor conversion failed for value {i}: {e}")
+                                # Fallback to simple reshaping
+                                v_reshaped = self._reshape_to_target(v, target_shape)
+                                processed_values.append(v_reshaped)
+                        else:
+                            # Simple reshaping fallback
+                            v_reshaped = self._reshape_to_target(v, target_shape)
+                            processed_values.append(v_reshaped)
+                    else:
+                        # Compatible shapes - apply transformation if needed
+                        transform_method = self._get_transform_method(query_type)
+                        if transform_method is not None:
+                            v_processed = transform_method(v)
+                        else:
+                            v_processed = v.copy()
+                        processed_values.append(v_processed)
+                        
+                except Exception as e:
+                    logging.warning(f"Value processing failed for index {i}: {e}")
+                    # Use reshaped query as fallback
+                    fallback_value = self._reshape_to_target(query_np, target_shape)
+                    processed_values.append(fallback_value)
+            
+            # Ensure we have processed values
+            if not processed_values:
+                processed_values = [query_np.copy()]
+                normalized_weights = np.array([1.0])
+            
+            # 5. Weighted Aggregation with shape safety
+            result = None
+            total_weight_used = 0.0
+            
+            for w, v in zip(normalized_weights, processed_values):
+                if w <= 1e-10:  # Skip near-zero weights
                     continue
                     
-                # Extract target feature vector
-                tgt_feat = self._extract_feature_vector(tgt_matrix, num_dims)
-                
-                # Calculate high-dimensional distance
-                high_dim_dist = np.linalg.norm(src_feat - tgt_feat)
-                
-                # Calculate physical distance as energy difference
-                physical_dist = abs(np.linalg.norm(src_matrix) - np.linalg.norm(tgt_matrix))
-                
-                # Calculate attention strength (inverse of distance)
-                strength = 1.0 / (high_dim_dist + 0.1)
-                
-                # Record the connection
-                connections[src_idx].append({
-                    "target_idx": tgt_idx,
-                    "high_dim_dist": float(high_dim_dist),
-                    "physical_dist": float(physical_dist),
-                    "ratio": float(physical_dist / (high_dim_dist + 1e-10)),
-                    "strength": float(strength)
-                })
-        
-        # 3. Dimensional Translation Layer
-        # Convert connections to attention matrix for computation
-        indices = list(matrices_dict.keys())
-        conn_matrix, metadata = self.connections_to_matrix(connections, indices=indices)
-        
-        # Convert to dense matrix for attention computation
-        if hasattr(conn_matrix, "toarray"):
-            attention_matrix = conn_matrix.toarray()
-        else:
-            attention_matrix = conn_matrix
-        
-        # Extract attention weights from query to keys
-        q_idx = indices.index('q')
-        attention_weights = []
-        for i in range(len(key)):
-            k_idx = indices.index(f'k{i}')
-            attention_weights.append(attention_matrix[q_idx, k_idx])
-        
-        # Normalize weights using softmax
-        weights_exp = np.exp(attention_weights)
-        weights_sum = np.sum(weights_exp)
-        if weights_sum > 0:
-            normalized_weights = weights_exp / weights_sum
-        else:
-            normalized_weights = np.ones_like(weights_exp) / len(weights_exp)
-        
-        # Get target shape from query
-        query_type = self._detect_matrix_type(query)
-        target_shape = query.shape
-        
-        # IMPROVED APPROACH: Use tensor conversion for shape compatibility
-        # For matrices with significant shape differences, use tensor_to_matrix and matrix_to_tensor
-        if any(v.shape != target_shape for v in value):
-            # Step 1: Convert query to standard format to get metadata
-            query_2d, tensor_metadata = self.tensor_to_matrix(query)
+                try:
+                    if result is None:
+                        result = w * v
+                        total_weight_used = w
+                    else:
+                        # Ensure shape compatibility
+                        if result.shape == v.shape:
+                            result += w * v
+                            total_weight_used += w
+                        else:
+                            # Force compatibility by reshaping
+                            v_compatible = self._reshape_to_target(v, result.shape)
+                            result += w * v_compatible
+                            total_weight_used += w
+                            
+                except Exception as e:
+                    logging.warning(f"Failed to aggregate value with weight {w}: {e}")
+                    continue
             
-            # Step 2: Process each value using the tensor conversion pipeline
-            processed_values = []
-            for v in value:
-                # Convert value to 2D matrix with same encoding
-                v_2d, _ = self.tensor_to_matrix(v)
-                
-                # Apply transformation (with None check)
-                transform_method = self._get_transform_method(query_type)
-                if transform_method is not None:
-                    v_transformed = transform_method(v_2d)
-                else:
-                    # Fallback to identity transformation if no transform method available
-                    v_transformed = v_2d.copy()
-                
-                # Convert back to original dimensionality with query shape
-                v_processed = self.matrix_to_tensor(v_transformed, tensor_metadata, 
-                                                original_shape=target_shape)
-                processed_values.append(v_processed)
-        else:
-            # For compatible shapes, use regular processing
-            processed_values = []
-            for v in value:
-                processed = self.process_rectangular_matrix(v, query_type, energy=None)
-                processed_values.append(processed)
-        
-        # Safely compute weighted sum with shape checking
-        result = None
-        for w, v in zip(normalized_weights, processed_values):
-            if result is None:
-                result = w * v
+            # Fallback if aggregation completely failed
+            if result is None or total_weight_used < 1e-10:
+                result = query_np.copy()
+                normalized_weights = np.array([1.0])
             else:
-                # Verify shape compatibility before adding
-                if result.shape != v.shape:
-                    # Reshape v to match result's shape
-                    v_reshaped = np.zeros_like(result)
-                    min_rows = min(v.shape[0], result.shape[0])
-                    min_cols = min(v.shape[1], result.shape[1])
-                    v_reshaped[:min_rows, :min_cols] = v[:min_rows, :min_cols]
-                    result += w * v_reshaped
-                else:
-                    result += w * v
-        
-        # If processing failed, fall back to query
-        if result is None:
-            result = query.copy()
-        
-        # Final transform to preserve matrix type from query (with None check)
-        final_transform = self._get_transform_method(query_type)
-        if final_transform is not None:
-            result = final_transform(result)
-        
-        return result
+                # Normalize result by total weight used for numerical stability
+                if total_weight_used > 1e-10 and abs(total_weight_used - 1.0) > 1e-6:
+                    result = result / total_weight_used
+            
+            # 6. Final transformation to preserve query type
+            try:
+                final_transform = self._get_transform_method(query_type)
+                if final_transform is not None:
+                    result = final_transform(result)
+            except Exception as e:
+                logging.warning(f"Final transformation failed: {e}")
+            
+            # 7. Update quantum field with hyperdimensional connections
+            if hasattr(self, 'quantum_field') and hasattr(self, '_update_quantum_field'):
+                try:
+                    # Extract attention scores from connection strengths
+                    field_attention_scores = {}
+                    
+                    # Map connection strengths to matrix type names
+                    matrix_type_names = list(self.matrix_graph.keys()) if hasattr(self, 'matrix_graph') else []
+                    
+                    for src_idx, targets in connections.items():
+                        if targets and src_idx == 'q':  # Focus on query connections
+                            avg_strength = np.mean([t['strength'] for t in targets])
+                            
+                            # Map to matrix type names if available
+                            for i, target in enumerate(targets):
+                                if i < len(matrix_type_names):
+                                    field_attention_scores[matrix_type_names[i]] = target['strength']
+                            
+                            # Add overall query strength
+                            field_attention_scores['query_strength'] = avg_strength
+                    
+                    # Update quantum field
+                    self._update_quantum_field(result, field_attention_scores, 0.03)
+                    
+                except Exception as e:
+                    logging.warning(f"Quantum field update failed: {e}")
+            
+            # 8. Convert back to original tensor format if needed
+            if original_is_tensor:
+                try:
+                    result = torch.tensor(result, device=original_device, dtype=original_dtype)
+                except Exception as e:
+                    logging.warning(f"Failed to convert result back to tensor: {e}")
+            
+            return result, normalized_weights.tolist()
+            
+        except ValueError as ve:
+            # Re-raise ValueError (like "Query cannot be None") to maintain API contract
+            raise ve
+        except Exception as e:
+            logging.error(f"Hyperdimensional attention failed completely: {e}")
+            # Return query as fallback for other exceptions
+            return query.copy() if hasattr(query, 'copy') else query, [1.0]
 
+    def _reshape_to_target(self, matrix, target_shape):
+        """
+        Helper method to safely reshape matrix to target shape with padding/cropping.
+        
+        Args:
+            matrix: Input matrix to reshape
+            target_shape: Desired output shape
+            
+        Returns:
+            np.ndarray: Reshaped matrix
+        """
+        try:
+            if matrix.shape == target_shape:
+                return matrix.copy()
+            
+            # Create result matrix with target shape
+            result = np.zeros(target_shape, dtype=matrix.dtype)
+            
+            # Calculate overlapping region
+            min_dims = [min(matrix.shape[i], target_shape[i]) for i in range(min(len(matrix.shape), len(target_shape)))]
+            
+            # Handle different dimensionalities
+            if len(matrix.shape) == len(target_shape):
+                # Same dimensionality - copy overlapping region
+                if len(min_dims) == 1:
+                    result[:min_dims[0]] = matrix[:min_dims[0]]
+                elif len(min_dims) == 2:
+                    result[:min_dims[0], :min_dims[1]] = matrix[:min_dims[0], :min_dims[1]]
+                elif len(min_dims) == 3:
+                    result[:min_dims[0], :min_dims[1], :min_dims[2]] = matrix[:min_dims[0], :min_dims[1], :min_dims[2]]
+                # Add more cases as needed
+            else:
+                # Different dimensionalities - flatten and reshape
+                flat_matrix = matrix.flatten()
+                flat_result = result.flatten()
+                copy_length = min(len(flat_matrix), len(flat_result))
+                flat_result[:copy_length] = flat_matrix[:copy_length]
+                result = flat_result.reshape(target_shape)
+            
+            return result
+            
+        except Exception as e:
+            logging.warning(f"Reshape failed: {e}, returning zeros")
+            # More robust fallback that doesn't rely on numpy.zeros
+            try:
+                return np.zeros(target_shape, dtype=np.float64)
+            except Exception:
+                # Ultimate fallback if even np.zeros fails
+                try:
+                    # Create zeros manually using list comprehension
+                    if len(target_shape) == 1:
+                        return np.array([0.0] * target_shape[0])
+                    elif len(target_shape) == 2:
+                        return np.array([[0.0] * target_shape[1] for _ in range(target_shape[0])])
+                    else:
+                        # For higher dimensions, create a minimal array
+                        return np.array([0.0]).reshape((1,) * len(target_shape))
+                except Exception:
+                    # Last resort - return 1D array of zeros
+                    return np.array([0.0])
+    
     def _extract_feature_vector(self, matrix, num_dims):
         """Extract a feature vector from matrix for hyperdimensional comparison"""
         # Handle different matrix types and dimensions

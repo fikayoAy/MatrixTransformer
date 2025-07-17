@@ -1,0 +1,65 @@
+{
+  "hyperdimensional": {
+    "8": {
+      "time": 58.90080666542053,
+      "matrix_conversion_time": 0.0,
+      "reconversion_time": 0.0,
+      "connections_count": 10,
+      "matrix_shape": [
+        18,
+        18
+      ],
+      "memory_usage": 360
+    }
+  },
+  "traditional": {
+    "PCA": {
+      "time": 14.225193500518799,
+      "output_shape": [
+        18,
+        8
+      ],
+      "reconstruction_error": 1.3710051649157012e-06,
+      "memory_usage": 1152
+    },
+    "TruncatedSVD": {
+      "time": 11.90894603729248,
+      "output_shape": [
+        18,
+        8
+      ],
+      "reconstruction_error": 1.6290210659807441e-06,
+      "memory_usage": 1152
+    },
+    "NMF": {
+      "time": 15.69735312461853,
+      "output_shape": [
+        18,
+        8
+      ],
+      "reconstruction_error": 1.631312752786856e-06,
+      "memory_usage": 1152
+    },
+    "TSNE": {
+      "time": 13.312337636947632,
+      "output_shape": [
+        18,
+        2
+      ],
+      "reconstruction_error": Infinity,
+      "memory_usage": 144
+    },
+    "MDS": {
+      "time": 1.1608343124389648,
+      "output_shape": [
+        18,
+        2
+      ],
+      "reconstruction_error": Infinity,
+      "memory_usage": 288
+    }
+  },
+  "reconstruction_error": {
+    "8": 0.0
+  }
+}
