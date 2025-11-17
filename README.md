@@ -1,28 +1,30 @@
 <!-- filepath: c:\Users\ayode\ConstantA\matrixTransfomer\README.md -->
-# MatrixTransformer
+# MatrixTransformer: Engineering Intelligence Through Deterministic Matrix Relationships
 
-A unified Python framework for structure-preserving matrix transformations in high-dimensional decision space.
+> Based on the paper: **MatrixTransformer: A Unified Framework for Matrix Transformations**  
+> [Read the full paper on Zenodo](https://zenodo.org/records/15867279)  
+> [Related project: QuantumAccel](https://github.com/fikayoAy/quantum_accel)
 
-> 📘 Based on the paper: **MatrixTransformer: A Unified Framework for Matrix Transformations**  
-> 🔗 [Read the full paper on Zenodo](https://zenodo.org/records/15867279)  
-> 🧠 [Related project: QuantumAccel](https://github.com/fikayoAy/quantum_accel)
 
 ---
 
-## 🧩 Overview
+## Overview
 
-**MatrixTransformer** introduces a novel method for navigating between 16 matrix types (e.g., symmetric, Toeplitz, Hermitian, sparse) in a continuous, mathematically coherent space using a 16-dimensional decision hypercube.
+**MatrixTransformer is a deterministic AI framework that discovers and preserves structural relationships across high-dimensional data using mathematically grounded matrix operations rather than probabilistic approximations.**
 
-🔹 Perform structure-preserving transformations  
-🔹 Quantify information-structure trade-offs  
-🔹 Interpolate between matrix types  
-🔹 Extendable with custom matrix definitions  
-🔹 Applications in ML, signal processing, quantum simulation, and more
+Contemporary AI often sacrifices transparency for performance, relying heavily on probabilistic approximations. **MatrixTransformer** reimagines intelligence: not as a simulation of understanding, but as a deterministic framework for discovering and preserving structural relationships across high-dimensional data.
 
-## 📦 Installation
+> **"Not an AI to fear, but one you define."**
+
+Built on rigorous mathematical foundations, MatrixTransformer offers a **lossless, structure-preserving, and explainable** approach to AI and data modeling.
+
+---
+
+
+## Installation
 
 ### Requirements
-⚠️ Ensure you are using Python 3.8+ and have NumPy, SciPy, and optionally PyTorch installed.
+Ensure you are using Python 3.8+ and have NumPy, SciPy, and optionally PyTorch installed.
 
 ### Clone from github and Install from wheel file
 ```bash
@@ -30,6 +32,8 @@ git clone https://github.com/fikayoAy/MatrixTransformer.git
 cd MatrixTransformer
 pip install dist/matrixtransformer-0.1.0-py3-none-any.whl
 ```
+[![GitHub stars](https://img.shields.io/github/stars/fikayoAy/MatrixTransformer?style=social)](https://github.com/fikayoAy/MatrixTransformer/stargazers)
+[![GitHub forks](https://img.shields.io/github/forks/fikayoAy/MatrixTransformer?style=social)](https://github.com/fikayoAy/MatrixTransformer/network)
 
 ### Install dependencies
 ```bash
@@ -44,7 +48,7 @@ print("MatrixTransformer installed successfully!")
 
 ---
 
-## 🔧 Basic Usage
+## Basic Usage
 
 ### Initialize the transformer
 
@@ -54,6 +58,10 @@ from MatrixTransformer import MatrixTransformer
 
 # Create a transformer instance
 transformer = MatrixTransformer()
+# accessing the matrixes stored in the transformer
+transformer.matrix
+# accessing the matrix graph in the transformer
+transformer.matrix_graph # contains 16 different matrix types see #matrixtransformer.py
 ```
 
 ### Transform a matrix to a specific type
@@ -78,6 +86,7 @@ matrix_2d, metadata = transformer.tensor_to_matrix(tensor)
 
 # Convert back to the original tensor
 reconstructed_tensor = transformer.matrix_to_tensor(matrix_2d, metadata)
+# the bilaterial tensor conversion ops perserves meta-data for lossless data reconstuction
 ```
 
 ### Combine matrices
@@ -128,7 +137,7 @@ magic_matrix = transformer.process_rectangular_matrix(matrix, 'magic_square')
 
 ---
 
-## 🎯 Advanced Features
+## Advanced Features
 
 ### Hypercube decision space navigation
 
@@ -146,66 +155,57 @@ for matrix_type in path:
         result = transform_method(result)
 ```
 
-### Hyperdimensional attention
+### Notice
+# This is an overview of what have been fixed and what the problem was
+find_hyperdimensional_connections returns very similar distances for data points projected to a unit hypershpere and this causes distance metrics like the log_map_sphere (used to find the logarithm map on a unit sphere), local_distance_sphere (used to compute the spherical distances between x0 and x) to fail and produce zero.
+How-ever it's not just thes metrics/calculations are affected but the total returun structure of find_hyperdimensional_connections: "targets.append({
+                                    "target_idx": valid_indices[tgt_idx],  # Use original index
+                                    "high_dim_dist": float(hd_dist),
+                                    "physical_dist": float(phys_dist),
+                                    "ratio": float(ratio),
+                                    "strength": float(similarity_val),
+                                    "dimensions": significant_dimensions.tolist(),
+                                    "log_map": v_ij.tolist() if hasattr(v_ij, 'tolist') else [],
+                                    "log_map_norm": vnorm,
+                                    "transported_log_map": v_ij_t.tolist() if hasattr(v_ij_t, 'tolist') else [],
+                                    "reciprocal_angle": reciprocal_angle,
+                                    "local_curvature": local_curvature,
+                                    "local_energy": local_energy,
+                                    "target_energy": target_energy,
+                                    "energy_gradient": energy_gradient,
+                                    "geodesic_error": geodesic_error,
+                                    # VARIANCE FEATURES
+                                    "source_projection_norm": src_projection_norm,
+                                    "target_projection_norm": tgt_projection_norm,
+                                    "norm_variance": norm_variance,
+                                    "norm_variance_relative": norm_variance_relative"
 
-```python
-# Apply hyperdimensional attention for more robust transformations
-query = np.random.randn(4, 4)
-keys = [np.random.randn(4, 4) for _ in range(3)]
-values = [np.random.randn(4, 4) for _ in range(3)]
-
-result = transformer.hyperdimensional_attention(query, keys, values)
-```
-
-### AI Hypersphere Container
-
-```python
-# Create a hyperdimensional container for an AI entity
-ai_entity = {"name": "Matrix Explorer", "capabilities": ["transform", "analyze"]}
-container = transformer.create_ai_hypersphere_container(
-    ai_entity, 
-    dimension=8,
-    base_radius=1.0
-)
-
-# Extract matrix from container
-matrix = container['extract_matrix']()
-
-# Update container state
-container['update_state'](np.random.randn(8))
-
-# Process temporal evolution of container
-container['process_temporal_state']()
-```
-
-### Blended Matrix Construction
-
-```python
-# Create a blended matrix from multiple source matrices
-matrix_indices = [0, 1, 2]  # Indices of matrices to blend
-blend_weights = [0.5, 0.3, 0.2]  # Weights for blending
-
-blended_matrix = transformer.blended_matrix_construction(
-    source_matrices=matrix_indices,
-    blend_weights=blend_weights,
-    target_type='symmetric',
-    preserve_properties=['energy'],
-    evolution_strength=0.1
-)
-```
+all produced suboptimal results due to the extreme closeness.
+However while digging deep into the problem i noticed that the real issue was points were already very close in angular terms before any normalization (this is using 7.0 radius instead of 1.0) the bug was that the tolerance threshold (1e-7) was treating this genuinely small but non-zero angle as if it were zero. 
+and the fix was to change from dot-product-based tolerance to angle-based tolerance
 
 ---
 
-## 🔁 Related Projects
+## Related Projects
 
 - [QuantumAccel](https://github.com/fikayoAy/quantum_accel): A quantum-inspired system built on MatrixTransformer's transformation logic, modeling coherence, flow dynamics, and structure-evolving computations.
 
 ---
 
-## 🧠 Citation
+## Citations
 
-If you use this library in your work, please cite the paper:
+### Hyperdimensional Connection Method
+```bibtex
+@misc{ayodele2025hyperdimensional,
+  title={Hyperdimensional connection method - A Lossless Framework Preserving Meaning, Structure, and Semantic Relationships across Modalities. (A MatrixTransformer subsidiary)},
+  author={Ayodele, Fikayomi},
+  year={2025},
+  doi={10.5281/zenodo.16051260},
+  url={https://doi.org/10.5281/zenodo.16051260}
+}
+```
 
+### MatrixTransformer Framework
 ```bibtex
 @misc{ayodele2025matrixtransformer,
   title={MatrixTransformer: A Unified Framework for Matrix Transformations},
@@ -218,7 +218,18 @@ If you use this library in your work, please cite the paper:
 
 ---
 
-## 📩 Contact
+## Contact & Collaboration
 
-Questions, suggestions, or collaboration ideas?
-Open an issue or reach out via Ayodeleanjola4@gmail.com/ 2273640@swansea.ac.uk
+**Research Collaboration**: Ayodeleanjola4@gmail.com | 2273640@swansea.ac.uk
+
+**Contribution Guidelines**: 
+- Bug reports welcome via Issues
+- Feature requests encouraged
+- Research collaborations actively sought
+- Documentation improvements appreciated
+
+**MatrixTransformer**: Intelligence, engineered — not hallucinated.
+
+> **Paper Links**:  
+> [Hyperdimensional Connection Method](https://doi.org/10.5281/zenodo.16051260)  
+> [MatrixTransformer Framework](https://zenodo.org/records/15867279)
