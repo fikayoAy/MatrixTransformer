@@ -14,6 +14,8 @@
 
 Contemporary AI often sacrifices transparency for performance, relying heavily on probabilistic approximations. **MatrixTransformer** reimagines intelligence: not as a simulation of understanding, but as a deterministic framework for discovering and preserving structural relationships across high-dimensional data.
 
+> **"Not an AI to fear, but one you define."**
+
 Built on rigorous mathematical foundations, MatrixTransformer offers a **lossless, structure-preserving, and explainable** approach to AI and data modeling.
 
 ---
@@ -153,34 +155,16 @@ for matrix_type in path:
         result = transform_method(result)
 ```
 
-### Notice
-# This is an overview of what have been fixed and what the problem was
-find_hyperdimensional_connections returns very similar distances for data points projected to a unit hypershpere and this causes distance metrics like the log_map_sphere (used to find the logarithm map on a unit sphere), local_distance_sphere (used to compute the spherical distances between x0 and x) to fail and produce zero.
-How-ever it's not just thes metrics/calculations are affected but the total returun structure of find_hyperdimensional_connections: "targets.append({
-                                    "target_idx": valid_indices[tgt_idx],  # Use original index
-                                    "high_dim_dist": float(hd_dist),
-                                    "physical_dist": float(phys_dist),
-                                    "ratio": float(ratio),
-                                    "strength": float(similarity_val),
-                                    "dimensions": significant_dimensions.tolist(),
-                                    "log_map": v_ij.tolist() if hasattr(v_ij, 'tolist') else [],
-                                    "log_map_norm": vnorm,
-                                    "transported_log_map": v_ij_t.tolist() if hasattr(v_ij_t, 'tolist') else [],
-                                    "reciprocal_angle": reciprocal_angle,
-                                    "local_curvature": local_curvature,
-                                    "local_energy": local_energy,
-                                    "target_energy": target_energy,
-                                    "energy_gradient": energy_gradient,
-                                    "geodesic_error": geodesic_error,
-                                    # VARIANCE FEATURES
-                                    "source_projection_norm": src_projection_norm,
-                                    "target_projection_norm": tgt_projection_norm,
-                                    "norm_variance": norm_variance,
-                                    "norm_variance_relative": norm_variance_relative"
+---
 
-all produced suboptimal results due to the extreme closeness.
-However while digging deep into the problem i noticed that the real issue was points were already very close in angular terms before any normalization (this is using 7.0 radius instead of 1.0) the bug was that the tolerance threshold (1e-7) was treating this genuinely small but non-zero angle as if it were zero. 
-and the fix was to change from dot-product-based tolerance to angle-based tolerance
+## Recent Updates
+
+**v0.1.0 - November 2025**
+- Fixed angular tolerance bug in `find_hyperdimensional_connections` 
+- Changed from dot-product-based to angle-based tolerance (1e-7 threshold was treating small non-zero angles as zero)
+- Improved distance metric calculations for hypersphere projections
+
+See [CHANGELOG.md](CHANGELOG.md) for detailed technical information.
 
 ---
 

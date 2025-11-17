@@ -366,6 +366,12 @@ class DynamicGraph(BaseGraph):
             c1 = self.node_cardinality.get(node1, np.zeros(self.cardinality_dim))
             c2 = self.node_cardinality.get(node2, np.zeros(self.cardinality_dim))
             
+            # FIXED: Convert lists to numpy arrays if needed
+            if isinstance(c1, list):
+                c1 = np.array(c1, dtype=np.float64)
+            if isinstance(c2, list):
+                c2 = np.array(c2, dtype=np.float64)
+                
             # ADDED FIX: Ensure both vectors have the same dimension
             if c1.shape != c2.shape:
                 # Resize both vectors to match the expected cardinality_dim
