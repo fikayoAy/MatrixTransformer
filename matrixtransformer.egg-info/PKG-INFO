@@ -1,0 +1,260 @@
+Metadata-Version: 2.1
+Name: matrixtransformer
+Version: 0.1.0
+Summary: A deterministic AI framework for structure-preserving matrix transformations
+Home-page: https://github.com/fikayoAy/MatrixTransformer
+Author: Fikayomi Ayodele
+Author-email: Ayodeleanjola4@gmail.com
+License: UNKNOWN
+Project-URL: Bug Tracker, https://github.com/fikayoAy/MatrixTransformer/issues
+Project-URL: Documentation, https://github.com/fikayoAy/MatrixTransformer#readme
+Project-URL: Source Code, https://github.com/fikayoAy/MatrixTransformer
+Project-URL: Changelog, https://github.com/fikayoAy/MatrixTransformer/blob/main/CHANGELOG.md
+Project-URL: Related Project, https://github.com/fikayoAy/quantum_accel
+Project-URL: Paper - MatrixTransformer, https://zenodo.org/records/15867279
+Project-URL: Paper - Hyperdimensional, https://doi.org/10.5281/zenodo.16051260
+Keywords: matrix-transformations,linear-algebra,deterministic-ai,structure-preserving,hyperdimensional-computing,manifold-learning,scientific-computing,machine-learning,quantum-inspired,graph-transformations
+Platform: any
+Classifier: Development Status :: 4 - Beta
+Classifier: Intended Audience :: Science/Research
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: Apache Software License
+Classifier: Operating System :: OS Independent
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Topic :: Scientific/Engineering
+Classifier: Topic :: Scientific/Engineering :: Mathematics
+Classifier: Topic :: Scientific/Engineering :: Artificial Intelligence
+Classifier: Topic :: Scientific/Engineering :: Information Analysis
+Classifier: Topic :: Software Development :: Libraries :: Python Modules
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+Provides-Extra: full
+Provides-Extra: viz
+Provides-Extra: ml
+Provides-Extra: jupyter
+Provides-Extra: dev
+License-File: LICENSE.txt
+
+<!-- filepath: c:\Users\ayode\ConstantA\matrixTransfomer\README.md -->
+# MatrixTransformer: Engineering Intelligence Through Deterministic Matrix Relationships
+
+> Based on the paper: **MatrixTransformer: A Unified Framework for Matrix Transformations**  
+> [Read the full paper on Zenodo](https://zenodo.org/records/15867279)  
+> [Related project: QuantumAccel](https://github.com/fikayoAy/quantum_accel)
+
+
+---
+
+## Overview
+
+**MatrixTransformer is a deterministic AI framework that discovers and preserves structural relationships across high-dimensional data using mathematically grounded matrix operations rather than probabilistic approximations.**
+
+Contemporary AI often sacrifices transparency for performance, relying heavily on probabilistic approximations. **MatrixTransformer** reimagines intelligence: not as a simulation of understanding, but as a deterministic framework for discovering and preserving structural relationships across high-dimensional data.
+
+> **"Not an AI to fear, but one you define."**
+
+Built on rigorous mathematical foundations, MatrixTransformer offers a **lossless, structure-preserving, and explainable** approach to AI and data modeling.
+
+---
+
+
+## Installation
+
+### Requirements
+Ensure you are using Python 3.8+ and have NumPy, SciPy, and optionally PyTorch installed.
+
+### Clone from github and Install from wheel file
+```bash
+git clone https://github.com/fikayoAy/MatrixTransformer.git
+cd MatrixTransformer
+pip install dist/matrixtransformer-0.1.0-py3-none-any.whl
+```
+[![GitHub stars](https://img.shields.io/github/stars/fikayoAy/MatrixTransformer?style=social)](https://github.com/fikayoAy/MatrixTransformer/stargazers)
+[![GitHub forks](https://img.shields.io/github/forks/fikayoAy/MatrixTransformer?style=social)](https://github.com/fikayoAy/MatrixTransformer/network)
+
+### Install dependencies
+```bash
+pip install numpy scipy torch
+```
+
+### Verify installation
+```python
+import MatrixTransformer
+print("MatrixTransformer installed successfully!")
+```
+
+---
+
+## Basic Usage
+
+### Initialize the transformer
+
+```python
+import numpy as np
+from MatrixTransformer import MatrixTransformer
+
+# Create a transformer instance
+transformer = MatrixTransformer()
+# accessing the matrixes stored in the transformer
+transformer.matrix
+# accessing the matrix graph in the transformer
+transformer.matrix_graph # contains 16 different matrix types see #matrixtransformer.py
+```
+
+### Transform a matrix to a specific type
+
+```python
+# Create a sample matrix
+matrix = np.random.randn(4, 4)
+
+# Transform to symmetric matrix
+symmetric_matrix = transformer.process_rectangular_matrix(matrix, 'symmetric')
+
+# Transform to positive definite
+positive_def = transformer.process_rectangular_matrix(matrix, 'positive_definite')
+```
+
+### Convert between tensors and matrices
+
+```python
+# Convert a 3D tensor to a 2D matrix representation
+tensor = np.random.randn(3, 4, 5)
+matrix_2d, metadata = transformer.tensor_to_matrix(tensor)
+
+# Convert back to the original tensor
+reconstructed_tensor = transformer.matrix_to_tensor(matrix_2d, metadata)
+# the bilaterial tensor conversion ops perserves meta-data for lossless data reconstuction
+```
+
+### Combine matrices
+
+```python
+# Combine two matrices using different strategies
+matrix1 = np.random.randn(3, 3)
+matrix2 = np.random.randn(3, 3)
+
+# Weighted combination
+combined = transformer.combine_matrices(
+    matrix1, matrix2, mode='weighted', weight1=0.6, weight2=0.4
+)
+
+# Other combination modes
+max_combined = transformer.combine_matrices(matrix1, matrix2, mode='max')
+multiply_combined = transformer.combine_matrices(matrix1, matrix2, mode='multiply')
+```
+
+### Add custom matrix types
+
+```python
+def custom_magic_matrix_rule(matrix):
+    """Transform a matrix to have 'magic square' properties."""
+    n = matrix.shape[0]
+    result = matrix.copy()
+    target_sum = n * (n**2 + 1) / 2
+    
+    # Simplified implementation for demonstration
+    # (For a real implementation, you would need proper balancing logic)
+    row_sums = result.sum(axis=1)
+    for i in range(n):
+        result[i, :] *= (target_sum / max(row_sums[i], 1e-10))
+    
+    return result
+
+# Add the new transformation rule
+transformer.add_transform(
+    matrix_type="magic_square",
+    transform_rule=custom_magic_matrix_rule,
+    properties={"equal_row_col_sums": True},
+    neighbors=["diagonal", "symmetric"]
+)
+
+# Now use your custom transformation
+magic_matrix = transformer.process_rectangular_matrix(matrix, 'magic_square')
+```
+
+---
+
+## Advanced Features
+
+### Hypercube decision space navigation
+
+```python
+# Find optimal transformation path between matrix types
+source_type = transformer._detect_matrix_type(matrix1)
+target_type = 'positive_definite'
+path, attention_scores = transformer._traverse_graph(matrix1, source_type=source_type)
+
+# Apply path-based transformation
+result = matrix1.copy()
+for matrix_type in path:
+    transform_method = transformer._get_transform_method(matrix_type)
+    if transform_method:
+        result = transform_method(result)
+```
+
+---
+
+## Recent Updates
+
+**v0.1.0 - November 2025**
+- Fixed angular tolerance bug in `find_hyperdimensional_connections` 
+- Changed from dot-product-based to angle-based tolerance (1e-7 threshold was treating small non-zero angles as zero)
+- Improved distance metric calculations for hypersphere projections
+
+See [CHANGELOG.md](CHANGELOG.md) for detailed technical information.
+
+---
+
+## Related Projects
+
+- [QuantumAccel](https://github.com/fikayoAy/quantum_accel): A quantum-inspired system built on MatrixTransformer's transformation logic, modeling coherence, flow dynamics, and structure-evolving computations.
+
+---
+
+## Citations
+
+### Hyperdimensional Connection Method
+```bibtex
+@misc{ayodele2025hyperdimensional,
+  title={Hyperdimensional connection method - A Lossless Framework Preserving Meaning, Structure, and Semantic Relationships across Modalities. (A MatrixTransformer subsidiary)},
+  author={Ayodele, Fikayomi},
+  year={2025},
+  doi={10.5281/zenodo.16051260},
+  url={https://doi.org/10.5281/zenodo.16051260}
+}
+```
+
+### MatrixTransformer Framework
+```bibtex
+@misc{ayodele2025matrixtransformer,
+  title={MatrixTransformer: A Unified Framework for Matrix Transformations},
+  author={Ayodele, Fikayomi},
+  year={2025},
+  doi={10.5281/zenodo.15867279},
+  url={https://zenodo.org/records/15867279}
+}
+```
+
+---
+
+## Contact & Collaboration
+
+**Research Collaboration**: Ayodeleanjola4@gmail.com | 2273640@swansea.ac.uk
+
+**Contribution Guidelines**: 
+- Bug reports welcome via Issues
+- Feature requests encouraged
+- Documentation improvements appreciated
+
+**MatrixTransformer**: Intelligence, engineered — not hallucinated.
+
+> **Paper Links**:  
+> [Hyperdimensional Connection Method](https://doi.org/10.5281/zenodo.16051260)  
+> [MatrixTransformer Framework](https://zenodo.org/records/15867279)
+
+

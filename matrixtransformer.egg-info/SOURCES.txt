@@ -1,0 +1,15 @@
+LICENSE.txt
+MANIFEST.in
+README.md
+base.py
+base_classes.py
+graph.py
+matrixtransformer.py
+requirements.txt
+setup.py
+matrixtransformer.egg-info/PKG-INFO
+matrixtransformer.egg-info/SOURCES.txt
+matrixtransformer.egg-info/dependency_links.txt
+matrixtransformer.egg-info/not-zip-safe
+matrixtransformer.egg-info/requires.txt
+matrixtransformer.egg-info/top_level.txt
