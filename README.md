@@ -14,8 +14,6 @@
 
 Contemporary AI often sacrifices transparency for performance, relying heavily on probabilistic approximations. **MatrixTransformer** reimagines intelligence: not as a simulation of understanding, but as a deterministic framework for discovering and preserving structural relationships across high-dimensional data.
 
-> **"Not an AI to fear, but one you define."**
-
 Built on rigorous mathematical foundations, MatrixTransformer offers a **lossless, structure-preserving, and explainable** approach to AI and data modeling.
 
 ---
