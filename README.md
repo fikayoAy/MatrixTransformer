@@ -207,7 +207,6 @@ See [CHANGELOG.md](CHANGELOG.md) for detailed technical information.
 **Contribution Guidelines**: 
 - Bug reports welcome via Issues
 - Feature requests encouraged
-- Research collaborations actively sought
 - Documentation improvements appreciated
 
 **MatrixTransformer**: Intelligence, engineered — not hallucinated.

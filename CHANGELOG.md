@@ -60,16 +60,5 @@ Changed from **dot-product-based tolerance** to **angle-based tolerance**. This 
 - Better energy gradient and curvature estimates
 - Reliable variance feature extraction
 
----
 
-## [Unreleased]
 
-### Planned
-- Performance benchmarks
-- Additional matrix transformation types
-- GPU acceleration support
-- Extended documentation with comparison tables
-
----
-
-**Format:** This changelog follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) principles.
