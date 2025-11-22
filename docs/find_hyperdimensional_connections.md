@@ -183,7 +183,7 @@ python export_connections_to_json.py
   
   #### Metric distributions (visual)
 
-  ![Metric distributions](../data&metrics-val/diagnostics/metrics_distributions.png)
+  ![Metric distributions — diagnostic plots for key metrics](../data&metrics-val/metrics_distributions.png)
 
   #### Data source & citation
 
