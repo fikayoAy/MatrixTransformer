@@ -175,6 +175,45 @@ python export_connections_to_json.py
   - This creates `connections_linked.json` in the same directory.
   - Make sure you run the exporter from the same directory where `hyperdimensional_connections_output.json` and `element_records_*.json` were written (or move the files together) so the exporter can resolve original rows.
 
+  ### Metric distributions & validation artifacts
+
+  - The repository includes precomputed metric distributions and a validation report for the example datasets under the `data&metrics-val` folder:
+    - `data&metrics-val/validation_report.txt` — validation summary produced by `validate_hyperdimensional_metrics.py`.
+    - `data&metrics-val/diagnostics/metrics_distributions.png` — visual diagnostics for key metrics (physical_dist, log_map_norm, energy_gradient, norm variance, ratio, strength).
+  
+  #### Metric distributions (visual)
+
+  ![Metric distributions](../data&metrics-val/diagnostics/metrics_distributions.png)
+
+  #### Data source & citation
+
+  The example datasets used for the demo and validation were derived from the processed data related to:
+
+  Wu, S.Z., Al-Eryani, G., Roden, D.L. et al. "A single-cell and spatially resolved atlas of human breast cancers." Nat Genet 53, 1334–1347 (2021). https://doi.org/10.1038/s41588-021-00911-1
+
+  If you use data from this repository, please consider citing that study.
+
+  Study summary (from the public dataset):
+
+  Breast cancers are complex cellular ecosystems where heterotypic interactions play central roles in disease progression and response to therapy. This work presents a single-cell and spatially resolved transcriptomics analysis of human breast cancers, introduces SCSubtype for intrinsic subtype classification, and provides high-resolution immune profiling (CITE-seq). The authors identify spatial stromal-immune niches, new macrophage populations, and present single-cell signatures used to stratify cohorts into ecotypes with distinct compositions and clinical outcomes.
+
+  Dataset portal: https://singlecell.broadinstitute.org/single_cell/study/SCP1039/a-single-cell-and-spatially-resolved-atlas-of-human-breast-cancers#study-summary
+
+  - To run the demo using those example datasets (they are included in `data&metrics-val`), run:
+
+  ```powershell
+  python process_data_hyperdimensional.py data&metrics-val/subset_object_Cancer_epithelial_subcluster.tsv \
+      data&metrics-val/subset_object_Myeloid_subcluster.tsv data&metrics-val/subset_object_T_cells_subcluster.tsv
+  ```
+
+    - After processing, run the validator to reproduce the validation report and diagnostics:
+
+  ```powershell
+  python validate_hyperdimensional_metrics.py
+  ```
+
+    - The outputs will be written to the same working directory (or the data folder if you run the scripts from there) and will match the example artifacts in `data&metrics-val`.
+
 ## 11) Validation script: `validate_hyperdimensional_metrics.py`
 
 - Purpose: performs a suite of geometric and statistical checks on the connections output to surface calculation issues and produce simple diagnostics/plots.
