@@ -159,8 +159,11 @@ for matrix_type in path:
 
 ## Recent Updates
 
+**v0.1.1 - November 22, 2025**
+- Added streaming/batch processing, memmap support, ANN option, and element-level metadata for `find_hyperdimensional_connections` (see CHANGELOG for details)
+
 **v0.1.0 - November 2025**
-- Fixed angular tolerance bug in `find_hyperdimensional_connections` 
+- Fixed angular tolerance bug in `find_hyperdimensional_connections`
 - Changed from dot-product-based to angle-based tolerance (1e-7 threshold was treating small non-zero angles as zero)
 - Improved distance metric calculations for hypersphere projections
 

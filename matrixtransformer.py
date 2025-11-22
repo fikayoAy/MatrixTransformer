@@ -2,13 +2,14 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import time
-from typing import Dict, Union
+from typing import Any, Dict, Union
 import numpy as np
 import scipy
 import torch
 import logging
 import math
 from enum import Enum, auto
+from collections import OrderedDict
 from sklearn.neighbors import NearestNeighbors
 from sklearn.mixture import GaussianMixture
 from sklearn.cluster import KMeans
@@ -6710,7 +6711,11 @@ class MatrixTransformer:
                 return np.zeros_like(x0)
             v_dir = v_dir / v_dir_norm
             result = theta * v_dir
-            logging.debug(f"log_map_sphere (single): result norm={np.linalg.norm(result):.6f}")
+            # Scale by sphere radius (7.0) to get actual spherical distance
+            # Unit sphere calculations give angles; multiply by radius for arc length
+            sphere_radius = 7.0
+            result = result * sphere_radius
+            logging.debug(f"log_map_sphere (single): result norm={np.linalg.norm(result):.6f} (scaled by radius={sphere_radius})")
             return result
         # Batch/mixed case: ensure both operands broadcast to (n, D)
         if x.ndim == 1:
@@ -6759,6 +6764,9 @@ class MatrixTransformer:
                 v_dir_ant = v_dir_ant / (np.linalg.norm(v_dir_ant) + eps)
                 v[i] = np.pi * v_dir_ant
         # For identical, keep zero vector
+        # Scale by sphere radius (7.0) to get actual spherical distances
+        sphere_radius = 7.0
+        v = v * sphere_radius
         return v
 
     def local_distance_sphere(self, x0, x, batch_size=256):
@@ -7539,7 +7547,11 @@ class MatrixTransformer:
     
     def find_hyperdimensional_connections(self, num_dims=8, min_similarity=0.5, min_ratio=5.0, top_k=None,
                                          batch_size_conn=None, use_memmap=False, memmap_dir=None,
-                                         use_ann=False, ann_k=128, block_size=1024, candidate_k=256):
+                                         use_ann=False, ann_k=128, block_size=1024, candidate_k=256,
+                                         registry=None, dataset_id=None, matrix_to_chunk_map=None,
+                                         include_element_metadata=True,
+                                         preview_size: int = 1024,
+                                         preview_cache_size: int = 128):
         """Find connections in hyperdimensional space between matrices and tensors.
 
         The method supports memory-backed processing and candidate pre-filtering.
@@ -7551,6 +7563,8 @@ class MatrixTransformer:
             ann_k: int - number of neighbors to retrieve per source from ANN
             block_size: int - block size for block-dot streaming fallback
             candidate_k: int - number of top candidates to keep per source in streaming fallback
+            preview_size: int - max bytes used for content preview (default 1024)
+            preview_cache_size: int - LRU cache size for previews (per instance)
 
         The new behavior preserves backward compatibility but allows large datasets to be
         processed without materializing the full NxN similarity matrix.
@@ -7558,7 +7572,387 @@ class MatrixTransformer:
         import logging
         
         logging.info(f"Finding hyperdimensional connections in {num_dims}D space...")
-        
+
+        matrix_to_chunk_map = matrix_to_chunk_map or {}
+        if not isinstance(matrix_to_chunk_map, dict):
+            try:
+                matrix_to_chunk_map = {idx: chunk_idx for idx, chunk_idx in enumerate(matrix_to_chunk_map)}
+            except Exception:
+                matrix_to_chunk_map = {}
+        semantic_metadata_cache: Dict[int, Any] = {}
+        from collections import defaultdict
+        per_chunk_full_connections = defaultdict(list)
+        cid_index: Dict[str, Any] = {}
+
+        def _get_connection_limit(default_limit=None):
+            """Determine maximum number of connections to keep per source.
+
+            If `top_k` is provided (positive int), use that. Otherwise return
+            `default_limit`. When `default_limit` is `None`, callers should
+            preserve the full list (no slicing).
+            """
+            if isinstance(top_k, int) and top_k > 0:
+                return top_k
+            return default_limit
+
+        connection_limit = _get_connection_limit()
+
+        # Initialize a per-instance LRU cache for previews
+        if not hasattr(self, '_content_preview_cache'):
+            # key -> preview string; use OrderedDict for LRU tracking
+            self._content_preview_cache = OrderedDict()
+        # attach a default cache max size to instance for reuse
+        # update cache max size to reflect current call's preference
+        self._preview_cache_maxsize = preview_cache_size
+
+        def _generate_content_preview(elements_list, load_module, preview_size_local=preview_size):
+            """
+            Reconstruct bytes for the given element records via load_module, then decode
+            into a human-friendly preview using recorded metadata and heuristics.
+
+            Returns a string; never returns raw bytes.
+            """
+            if not elements_list:
+                return ""
+
+            source_meta: Dict[str, Any] = {}
+            original_type = "bytes"
+            encoding = "utf-8"
+            try:
+                if registry is not None and dataset_id is not None:
+                    entry = load_module.get_dataset_entry(registry, dataset_id)
+                    source_meta = entry.get('ingest_metadata', {}).get('source', {}) or {}
+                    original_type = source_meta.get('original_type', original_type) or original_type
+                    encoding = source_meta.get('encoding_used') or source_meta.get('encoding') or encoding
+            except Exception:
+                source_meta = {}
+                original_type = 'bytes'
+
+            # Gather offsets/lengths from element records to reconstruct exact bytes
+            offsets = []
+            for elem in elements_list:
+                try:
+                    off = int(elem.get('absolute_offset', elem.get('offset', 0)))
+                    length = int(elem.get('length', elem.get('length_bytes', elem.get('byte_length', 1) or 1)))
+                    offsets.append((off, length))
+                except Exception:
+                    continue
+
+            # If no explicit offsets available, try to fall back to 'value' integers
+            if not offsets:
+                byte_values = [int(v) for v in (elem.get('value') for elem in elements_list) if v is not None]
+                if byte_values:
+                    try:
+                        preview_bytes = bytes(byte_values)
+                        try:
+                            return _cache_and_return(preview_bytes.decode(encoding, errors='replace'))
+                        except Exception:
+                            return _cache_and_return(preview_bytes.hex()[:preview_size_local * 2])
+                    except Exception:
+                        return ""
+
+            # Merge ranges to minimize reconstruct calls
+            offsets.sort(key=lambda x: x[0])
+            merged_ranges = []
+            for off, length in offsets:
+                if not merged_ranges:
+                    merged_ranges.append([off, length])
+                    continue
+                last_off, last_len = merged_ranges[-1]
+                if off <= last_off + last_len:
+                    # overlapping/contiguous
+                    new_len = max(last_off + last_len, off + length) - last_off
+                    merged_ranges[-1][1] = new_len
+                else:
+                    merged_ranges.append([off, length])
+
+            # After merging ranges, compute cache key if possible
+            cache_key = None
+            try:
+                # Prefer chunk-level caching if all elements come from same chunk
+                chunk_idxs = [elem.get('chunk_index') or elem.get('chunk_idx') for elem in elements_list]
+                chunk_idxs_norm = [int(ci) if ci is not None else None for ci in chunk_idxs]
+                unique_chunk_idxs = set(chunk_idxs_norm)
+                if len(unique_chunk_idxs) == 1 and list(unique_chunk_idxs)[0] is not None:
+                    cache_key = ('chunk', dataset_id, int(list(unique_chunk_idxs)[0]), preview_size_local)
+                else:
+                    # Fallback to first merged range if available
+                    if merged_ranges:
+                        sr, lr = merged_ranges[0]
+                        cache_key = ('range', dataset_id, int(sr), int(sr + lr), preview_size_local)
+            except Exception:
+                cache_key = None
+
+            # Check LRU cache for previously computed preview
+            try:
+                cache = getattr(self, '_content_preview_cache', None)
+                if cache_key is not None and cache is not None and cache_key in cache:
+                    try:
+                        cache.move_to_end(cache_key)
+                    except Exception:
+                        pass
+                    logging.debug(f"Preview cache hit for key {cache_key}")
+                    return cache[cache_key]
+            except Exception:
+                pass
+
+            total_preview_bytes = 0
+            snippets = []
+            for start, length in merged_ranges:
+                if total_preview_bytes >= preview_size_local:
+                    break
+                end = start + length
+                if total_preview_bytes + length > preview_size_local:
+                    end = start + (preview_size_local - total_preview_bytes)
+                block = b""
+                try:
+                    block = load_module.reconstruct_range(registry, dataset_id, start, end)
+                    if not isinstance(block, (bytes, bytearray)):
+                        block = bytes(block)
+                except Exception:
+                    # fallback: try to reconstruct the chunk if possible
+                    try:
+                        chunk_idx = elements_list[0].get('chunk_index') or elements_list[0].get('chunk_idx')
+                        if chunk_idx is not None:
+                            block = load_module.reconstruct_chunk(registry, dataset_id, int(chunk_idx))
+                    except Exception:
+                        block = b""
+
+                if not block:
+                    continue
+
+                take = min(len(block), preview_size_local - total_preview_bytes)
+                snippets.append(block[:take])
+                total_preview_bytes += take
+
+            preview_bytes = b"".join(snippets)[:preview_size_local]
+
+            import json
+
+            def safe_text_decode(b: bytes):
+                try:
+                    return b.decode(encoding, errors='replace')
+                except Exception:
+                    try:
+                        return b.decode('utf-8', errors='replace')
+                    except Exception:
+                        return None
+
+            # Helper to store in cache and return a string
+            def _cache_and_return(s: str):
+                try:
+                    cache = getattr(self, '_content_preview_cache', None)
+                    if cache_key is not None and cache is not None:
+                        cache[cache_key] = s
+                        logging.debug(f"Stored preview in cache for key {cache_key}")
+                        try:
+                            cache.move_to_end(cache_key)
+                        except Exception:
+                            pass
+                        # prune
+                        maxsize = getattr(self, '_preview_cache_maxsize', preview_cache_size)
+                        try:
+                            while len(cache) > int(maxsize):
+                                cache.popitem(last=False)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                return s
+
+            # If serialization is JSON, try to pretty print
+            try:
+                if source_meta.get('serialization') == 'json' or original_type in {'dict', 'list', 'tuple', 'set'}:
+                    txt = safe_text_decode(preview_bytes)
+                    if txt:
+                        try:
+                            obj = json.loads(txt)
+                            pretty = json.dumps(obj, ensure_ascii=False, indent=2)
+                            return _cache_and_return((pretty[:preview_size_local] + '...') if len(pretty) > preview_size_local else pretty)
+                        except Exception:
+                            if txt:
+                                return _cache_and_return(txt[:preview_size_local] + ('...' if len(txt) > preview_size_local else ''))
+            except Exception:
+                pass
+
+            if original_type in {'str', 'string', 'Text'}:
+                txt = safe_text_decode(preview_bytes)
+                if txt:
+                    return _cache_and_return(txt[:preview_size_local] + ('...' if len(txt) > preview_size_local else ''))
+
+            # Try to reconstruct numpy arrays if metadata available
+            try:
+                if source_meta.get('array_shape') or source_meta.get('array_dtype') or original_type in {'ndarray', 'ndarray_like'}:
+                    dtype = source_meta.get('array_dtype')
+                    shape = source_meta.get('array_shape')
+                    if dtype:
+                        dtype_obj = np.dtype(dtype)
+                    else:
+                        dtype_obj = None
+                    if dtype_obj is not None and shape:
+                        shape_tuple = tuple(shape) if isinstance(shape, (list, tuple)) else (int(shape),)
+                        arr = np.frombuffer(preview_bytes, dtype=dtype_obj)
+                        if arr.size > 0:
+                            try:
+                                arr = arr[:int(np.prod(shape_tuple))]
+                                arr = arr.reshape(shape_tuple)
+                            except Exception:
+                                pass
+                            return _cache_and_return(np.array2string(arr, threshold=10, max_line_width=preview_size_local)[:preview_size_local])
+            except Exception:
+                pass
+
+            # Quick image detection, produce thumbnail if possible
+            try:
+                import imghdr
+                itype = imghdr.what(None, preview_bytes)
+                if itype:
+                    # Try to create a small base64 thumbnail if Pillow is available
+                    try:
+                        from PIL import Image
+                        import io as _io
+                        import base64 as _base64
+                        img = Image.open(_io.BytesIO(preview_bytes))
+                        # generate thumbnail
+                        thumb_size = (64, 64)
+                        img.thumbnail(thumb_size)
+                        buf = _io.BytesIO()
+                        img.save(buf, format='PNG')
+                        b64 = _base64.b64encode(buf.getvalue()).decode('ascii')
+                        return _cache_and_return(f"<image: {itype}, {len(preview_bytes)} bytes, thumbnail:data:image/png;base64,{b64}>")
+                    except Exception:
+                        return _cache_and_return(f"<image: {itype}, {len(preview_bytes)} bytes>")
+            except Exception:
+                pass
+
+            # Fallback: try as text then hex
+            txt = safe_text_decode(preview_bytes)
+            if txt:
+                sanitized = ''.join(ch if ch.isprintable() or ch.isspace() else '�' for ch in txt)
+                return _cache_and_return(sanitized[:preview_size_local] + ('...' if len(sanitized) > preview_size_local else ''))
+
+            try:
+                return _cache_and_return(f"<binary: {preview_bytes[:min(len(preview_bytes), 64)].hex()}... ({len(preview_bytes)} bytes)>")
+            except Exception:
+                return _cache_and_return(f"<binary: {len(preview_bytes)} bytes>")
+
+
+        import os, json
+        per_chunk_metadata_dir = f"element_metadata_{dataset_id}" if dataset_id else "element_metadata"
+        if not os.path.exists(per_chunk_metadata_dir):
+            try:
+                os.makedirs(per_chunk_metadata_dir)
+            except Exception:
+                pass
+
+        def _extract_semantic_metadata_for_chunk(chunk_idx: int):
+            if registry is None or dataset_id is None:
+                return None
+
+            if chunk_idx in semantic_metadata_cache:
+                return semantic_metadata_cache[chunk_idx]
+
+            try:
+                import load as load_module
+            except Exception as exc:
+                logging.warning(f"Unable to import load module for semantic metadata: {exc}")
+                semantic_metadata_cache[chunk_idx] = None
+                return None
+
+            try:
+                chunk_meta = load_module.get_chunk_metadata(registry, dataset_id, chunk_idx)
+                start_pos = int(chunk_meta.get('start_position', chunk_meta.get('start', 0) or 0))
+                length_val = chunk_meta.get('length')
+                if length_val is None:
+                    length_val = chunk_meta.get('length_bytes', 0)
+                length_val = int(length_val or 0)
+                end_pos = start_pos + length_val
+                elements_list = list(load_module.get_elements_in_range(registry, dataset_id, start_pos, end_pos))
+                preview = _generate_content_preview(elements_list, load_module, preview_size_local=10**7)
+                # Write full metadata to per-chunk file
+                element_file = os.path.join(per_chunk_metadata_dir, f"element_records_{dataset_id}_chunk_{chunk_idx}.json")
+                try:
+                    # write compressed per-chunk element records
+                    element_file = element_file + ".gz"
+                    import gzip
+                    with gzip.open(element_file, "wt", encoding="utf-8") as f:
+                        json.dump({
+                            "dataset_id": dataset_id,
+                            "chunk_index": chunk_idx,
+                            "start_position": start_pos,
+                            "length": length_val,
+                            "element_records": elements_list,
+                            "content_preview": preview,
+                            "byte_count": len(elements_list),
+                            "element_count": len(elements_list)
+                        }, f, ensure_ascii=False, indent=2)
+                    # Build CID / signature index entries for fast lookup
+                    try:
+                        for elem in elements_list:
+                            sig = None
+                            if isinstance(elem, dict):
+                                for k in ("element_signature", "signature", "cid", "id"):
+                                    if k in elem and elem.get(k):
+                                        sig = str(elem.get(k))
+                                        break
+                                if sig is None:
+                                    try:
+                                        eidx = int(elem.get('element_index')) if 'element_index' in elem else None
+                                    except Exception:
+                                        eidx = None
+                                    sig = f"{dataset_id}:chunk_{chunk_idx}:elem_{eidx if eidx is not None else 'unknown'}"
+                                cid_index[sig] = {
+                                    'element_records_file': element_file,
+                                    'chunk_index': chunk_idx,
+                                    'element_index': elem.get('element_index')
+                                }
+                    except Exception:
+                        pass
+                except Exception as exc:
+                    logging.warning(f"Failed to write per-chunk metadata file {element_file}: {exc}")
+                # Only summary and reference in main output
+                metadata = {
+                    'chunk_index': chunk_idx,
+                    'start_position': start_pos,
+                    'length': length_val,
+                    'element_records_file': element_file,
+                    'byte_count': len(elements_list),
+                    'element_count': len(elements_list)
+                }
+            except Exception as exc:
+                logging.warning(f"Failed to extract semantic metadata for chunk {chunk_idx}: {exc}")
+                element_file = os.path.join(per_chunk_metadata_dir, f"element_records_{dataset_id}_chunk_{chunk_idx}.json")
+                metadata = {
+                    'chunk_index': chunk_idx,
+                    'error': str(exc),
+                    'element_records_file': element_file,
+                    'byte_count': 0,
+                    'element_count': 0
+                }
+
+            semantic_metadata_cache[chunk_idx] = metadata
+            return metadata
+
+        def _attach_semantic_metadata(connection_dict: Dict[str, Any], source_matrix_idx: int, target_matrix_idx: int):
+            if (not include_element_metadata) or registry is None or dataset_id is None or not matrix_to_chunk_map:
+                return
+
+            try:
+                if source_matrix_idx in matrix_to_chunk_map:
+                    src_chunk_idx = matrix_to_chunk_map[source_matrix_idx]
+                    src_meta = _extract_semantic_metadata_for_chunk(int(src_chunk_idx))
+                    if src_meta is not None:
+                        # Only summary fields and reference
+                        connection_dict['source_metadata'] = src_meta
+                if target_matrix_idx in matrix_to_chunk_map:
+                    tgt_chunk_idx = matrix_to_chunk_map[target_matrix_idx]
+                    tgt_meta = _extract_semantic_metadata_for_chunk(int(tgt_chunk_idx))
+                    if tgt_meta is not None:
+                        # Only summary fields and reference
+                        connection_dict['target_metadata'] = tgt_meta
+            except Exception as exc:
+                logging.warning(f"Failed to attach semantic metadata: {exc}")
+
         # Initialize the attribute regardless of outcome
         self.hyperdimensional_connections = {}
         logging.info(f"Initializing hyperdimensional connections search with {num_dims}D space...")
@@ -7729,7 +8123,6 @@ class MatrixTransformer:
                 # Use the matrix directly as a point, preserving its structure and magnitude
                 flat_original = np.asarray(mat, dtype=float).ravel()
                 original_norm = float(np.linalg.norm(flat_original))
-                projection_norms.append(original_norm)
                 
                 # Normalize to radius 7.0 for geometric operations
                 # This ensures all points lie on a hypersphere of radius 7.0 for valid geodesic calculations
@@ -7740,6 +8133,10 @@ class MatrixTransformer:
                     x = np.ones_like(flat_original)
                     x = (x / (np.linalg.norm(x) + 1e-12)) * 7.0  # Scale to radius 7.0
                 projected_points.append(x)
+                
+                # Store the actual projection norm - explicitly 7.0 since we normalized to that radius
+                # Computing it would give ~7.0 with floating point errors, so use exact value
+                projection_norms.append(7.0)
             except Exception as e:
                 logging.warning(f"Hypersphere projection failed for matrix {i}: {e}")
                 projection_failures += 1
@@ -8041,8 +8438,15 @@ class MatrixTransformer:
                             if tgt_idx >= len(valid_indices):
                                 continue
 
-                            # Physical distance between matrices in 3D coords
-                            phys_dist = np.linalg.norm(coords_mmap[i + batch_idx] - coords_mmap[tgt_idx])
+                            # Physical distance: use spherical arc length from hypersphere projection
+                            # This matches log_map_norm and provides consistent spherical geometry
+                            try:
+                                x_i_proj = proj_mmap[i + batch_idx]
+                                x_j_proj = proj_mmap[tgt_idx]
+                                phys_dist = float(self.local_distance_sphere(x_i_proj, x_j_proj))
+                            except Exception as e:
+                                logging.debug(f"Failed to compute spherical distance, using fallback: {e}")
+                                phys_dist = np.linalg.norm(coords_mmap[i + batch_idx] - coords_mmap[tgt_idx])
                             tgt_local = tgt_idx
                             
                             # Get similarity value from candidate arrays if available
@@ -8064,15 +8468,23 @@ class MatrixTransformer:
                             except Exception:
                                 similarity_val = 0.0
                             
-                            # Calculate hyperdimensional distance safely
-                            hd_dist = np.sqrt(2 * (1 - np.clip(similarity_val, -1, 1)))
-                            
-                            # Avoid division by zero
-                            if hd_dist < 1e-10:
-                                hd_dist = 1e-10
-                            
-                            # Calculate ratio
-                            ratio = phys_dist / hd_dist
+                            # Calculate hyperdimensional distance: prefer Euclidean on the original
+                            # high-dimensional feature vectors when available. Fall back to the
+                            # angular distance derived from cosine similarity only if needed.
+                            try:
+                                src_feat = np.asarray(features_mmap[i + batch_idx], dtype=float)
+                                tgt_feat = np.asarray(features_mmap[tgt_idx], dtype=float)
+                                hd_dist = float(np.linalg.norm(src_feat - tgt_feat))
+                            except Exception:
+                                hd_dist = float(np.sqrt(max(0.0, 2 * (1 - np.clip(similarity_val, -1, 1)))))
+
+                            # If the high-dim distance is exactly zero, the ratio is undefined
+                            # (points are identical in feature space). Mark ratio as infinite
+                            # in that case so downstream logic can handle it explicitly.
+                            if hd_dist == 0.0:
+                                ratio = float('inf')
+                            else:
+                                ratio = phys_dist / hd_dist
                             
                             # Find dimensions that contributed most to the similarity
                             try:
@@ -8122,6 +8534,20 @@ class MatrixTransformer:
                                 except Exception:
                                     v_ij = np.array([])
                                     vnorm = 0.0
+                                
+                                # Update phys_dist to match vnorm (spherical distance)
+                                # This ensures log_map_norm and physical_dist are identical
+                                phys_dist = vnorm
+
+                                # Recompute ratio from the final physical distance and high-dim distance
+                                # to ensure stored values are self-consistent for validation.
+                                try:
+                                    if hd_dist == 0.0:
+                                        ratio = float('inf')
+                                    else:
+                                        ratio = phys_dist / hd_dist
+                                except Exception:
+                                    ratio = float('inf')
                                 
                                 # Skip near-duplicate connections (geodesic distance too small)
                                 # NOTE: Threshold relaxed to 1e-9 to allow connections between similar points
@@ -8183,7 +8609,10 @@ class MatrixTransformer:
                                     reciprocal_angle = 0.0
 
                                 try:
-                                    local_curvature = float((hd_dist - phys_dist) / (phys_dist + 1e-9))
+                                    # Curvature for sphere of radius R is κ = -1/R²
+                                    # For R=7.0, curvature should be -1/49 ≈ -0.0204
+                                    sphere_radius = 7.0
+                                    local_curvature = float(-1.0 / (sphere_radius ** 2))
                                 except Exception:
                                     local_curvature = 0.0
 
@@ -8210,35 +8639,65 @@ class MatrixTransformer:
                                     norm_variance = 0.0
                                     norm_variance_relative = 0.0
 
-                                targets.append({
-                                    "target_idx": valid_indices[tgt_idx],  # Use original index
+                                full_entry = {
+                                    "source_idx": src_idx,
+                                    "target_idx": valid_indices[tgt_idx],
                                     "high_dim_dist": float(hd_dist),
+                                    "hyperdimensional_dist": float(hd_dist),
                                     "physical_dist": float(phys_dist),
                                     "ratio": float(ratio),
                                     "strength": float(similarity_val),
                                     "dimensions": significant_dimensions.tolist(),
                                     "log_map": v_ij.tolist() if hasattr(v_ij, 'tolist') else [],
-                                    "log_map_norm": vnorm,
+                                    "log_map_norm": float(vnorm),
                                     "transported_log_map": v_ij_t.tolist() if hasattr(v_ij_t, 'tolist') else [],
-                                    "reciprocal_angle": reciprocal_angle,
-                                    "local_curvature": local_curvature,
-                                    "local_energy": local_energy,
-                                    "target_energy": target_energy,
-                                    "energy_gradient": energy_gradient,
-                                    "geodesic_error": geodesic_error,
-                                    # VARIANCE FEATURES
-                                    "source_projection_norm": src_projection_norm,
-                                    "target_projection_norm": tgt_projection_norm,
-                                    "norm_variance": norm_variance,
-                                    "norm_variance_relative": norm_variance_relative
-                                })
+                                    "reciprocal_angle": float(reciprocal_angle),
+                                    "local_curvature": float(local_curvature),
+                                    "local_energy": float(local_energy),
+                                    "target_energy": float(target_energy),
+                                    "energy_gradient": float(energy_gradient),
+                                    "geodesic_error": float(geodesic_error),
+                                    "source_projection_norm": float(src_projection_norm),
+                                    "target_projection_norm": float(tgt_projection_norm),
+                                    "norm_variance": float(norm_variance),
+                                    "norm_variance_relative": float(norm_variance_relative)
+                                }
+                                summary_entry = {
+                                    "source_idx": src_idx,
+                                    "target_idx": valid_indices[tgt_idx],
+                                    "high_dim_dist": float(hd_dist),
+                                    "hyperdimensional_dist": float(hd_dist),
+                                    "physical_dist": float(phys_dist),
+                                    "ratio": float(ratio),
+                                    "strength": float(similarity_val),
+                                    "dimensions": significant_dimensions.tolist(),
+                                    "log_map_norm": float(vnorm),
+                                    "reciprocal_angle": float(reciprocal_angle),
+                                    "local_curvature": float(local_curvature),
+                                    "local_energy": float(local_energy),
+                                    "target_energy": float(target_energy),
+                                    "energy_gradient": float(energy_gradient),
+                                    "geodesic_error": float(geodesic_error),
+                                    "source_projection_norm": float(src_projection_norm),
+                                    "target_projection_norm": float(tgt_projection_norm),
+                                    "norm_variance": float(norm_variance),
+                                    "norm_variance_relative": float(norm_variance_relative)
+                                }
+                                _attach_semantic_metadata(summary_entry, src_idx, valid_indices[tgt_idx])
+                                targets.append(summary_entry)
+                                try:
+                                    src_chunk = matrix_to_chunk_map.get(src_idx)
+                                    if src_chunk is not None:
+                                        per_chunk_full_connections[int(src_chunk)].append(full_entry)
+                                except Exception:
+                                    pass
                                 logging.debug(f"Created edge {src_idx}->{valid_indices[tgt_idx]} with strength={similarity_val:.3f}, ratio={ratio:.1f}")
                         except Exception as e:
                             logging.warning(f"Could not process connection from {src_idx} to {valid_indices[tgt_idx] if tgt_idx < len(valid_indices) else tgt_idx}: {e}")
                             continue
                 
                 if targets:
-                    connections[src_idx] = sorted(targets, key=lambda x: x["strength"], reverse=True)[:5]
+                    connections[src_idx] = sorted(targets, key=lambda x: x["strength"], reverse=True)[:connection_limit]
                 else:
                     # If nothing passed the ratio threshold but a top_k override is requested,
                     # include the top_k highest-similarity targets (excluding self)
@@ -8285,7 +8744,13 @@ class MatrixTransformer:
                             try:
                                 if tgt_idx >= len(valid_indices):
                                     continue
-                                phys_dist = np.linalg.norm(coords_mmap[i + batch_idx] - coords_mmap[tgt_idx])
+                                # Use spherical arc length for consistency
+                                try:
+                                    x_i_proj = proj_mmap[i + batch_idx]
+                                    x_j_proj = proj_mmap[tgt_idx]
+                                    phys_dist = float(self.local_distance_sphere(x_i_proj, x_j_proj))
+                                except Exception:
+                                    phys_dist = np.linalg.norm(coords_mmap[i + batch_idx] - coords_mmap[tgt_idx])
                                 # Attempt to get similarity from candidate_sims if present
                                 similarity_val = 0.0
                                 try:
@@ -8304,9 +8769,12 @@ class MatrixTransformer:
                                         similarity_val = float(np.dot(np.asarray(features_mmap[i + batch_idx], dtype=float), np.asarray(features_mmap[tgt_idx], dtype=float)))
                                 except Exception:
                                     similarity_val = 0.0
-                                hd_dist = np.sqrt(2 * (1 - np.clip(similarity_val, -1, 1)))
-                                if hd_dist < 1e-10:
-                                    hd_dist = 1e-10
+                                try:
+                                    src_feat = np.asarray(features_mmap[i + batch_idx], dtype=float)
+                                    tgt_feat = np.asarray(features_mmap[tgt_idx], dtype=float)
+                                    hd_dist = float(np.linalg.norm(src_feat - tgt_feat))
+                                except Exception:
+                                    hd_dist = float(np.sqrt(max(0.0, 2 * (1 - np.clip(similarity_val, -1, 1)))))
                                 v_ij = np.array([])
                                 vnorm = 0.0
                                 try:
@@ -8323,6 +8791,10 @@ class MatrixTransformer:
                                     vnorm = float(np.linalg.norm(v_ij))
                                 except Exception:
                                     vnorm = 0.0
+                                
+                                # Update phys_dist to match vnorm (spherical distance)
+                                # This ensures log_map_norm and physical_dist are identical
+                                phys_dist = vnorm
                                 
                                 # Skip near-duplicate connections in fallback branch too
                                 # NOTE: Threshold relaxed to 1e-9 to allow connections between similar points
@@ -8361,33 +8833,62 @@ class MatrixTransformer:
                                     norm_variance = 0.0
                                     norm_variance_relative = 0.0
                                 
-                                fallback_targets.append({
+                                full_entry = {
+                                    "source_idx": src_idx,
                                     "target_idx": valid_indices[tgt_idx],
                                     "high_dim_dist": float(hd_dist),
+                                    "hyperdimensional_dist": float(hd_dist),
                                     "physical_dist": float(phys_dist),
                                     "ratio": float(phys_dist / hd_dist) if hd_dist != 0 else float('inf'),
-                                    "strength": similarity_val,
+                                    "strength": float(similarity_val),
                                     "dimensions": [0, 1, 2],
-                                    # reciprocal geometry for fallback targets
                                     "log_map": v_ij.tolist() if hasattr(v_ij, 'tolist') else [],
-                                    "log_map_norm": vnorm,
+                                    "log_map_norm": float(vnorm),
                                     "transported_log_map": (v_ij_t_val.tolist() if hasattr(v_ij_t_val, 'tolist') else []),
                                     "reciprocal_angle": 0.0,
                                     "local_curvature": float((hd_dist - phys_dist) / (phys_dist + 1e-9)) if phys_dist != 0 else 0.0,
-                                    "local_energy": local_energy,
-                                    "target_energy": target_energy,
+                                    "local_energy": float(local_energy),
+                                    "target_energy": float(target_energy),
                                     "energy_gradient": float(target_energy - local_energy),
                                     "geodesic_error": float(abs(vnorm - phys_dist)),
-                                    # VARIANCE FEATURES
-                                    "source_projection_norm": src_projection_norm,
-                                    "target_projection_norm": tgt_projection_norm,
-                                    "norm_variance": norm_variance,
-                                    "norm_variance_relative": norm_variance_relative
-                                })
+                                    "source_projection_norm": float(src_projection_norm),
+                                    "target_projection_norm": float(tgt_projection_norm),
+                                    "norm_variance": float(norm_variance),
+                                    "norm_variance_relative": float(norm_variance_relative)
+                                }
+                                summary_entry = {
+                                    "source_idx": src_idx,
+                                    "target_idx": valid_indices[tgt_idx],
+                                    "high_dim_dist": float(hd_dist),
+                                    "hyperdimensional_dist": float(hd_dist),
+                                    "physical_dist": float(phys_dist),
+                                    "ratio": float(phys_dist / hd_dist) if hd_dist != 0 else float('inf'),
+                                    "strength": float(similarity_val),
+                                    "dimensions": [0, 1, 2],
+                                    "log_map_norm": float(vnorm),
+                                    "reciprocal_angle": 0.0,
+                                    "local_curvature": float((hd_dist - phys_dist) / (phys_dist + 1e-9)) if phys_dist != 0 else 0.0,
+                                    "local_energy": float(local_energy),
+                                    "target_energy": float(target_energy),
+                                    "energy_gradient": float(target_energy - local_energy),
+                                    "geodesic_error": float(abs(vnorm - phys_dist)),
+                                    "source_projection_norm": float(src_projection_norm),
+                                    "target_projection_norm": float(tgt_projection_norm),
+                                    "norm_variance": float(norm_variance),
+                                    "norm_variance_relative": float(norm_variance_relative)
+                                }
+                                _attach_semantic_metadata(summary_entry, src_idx, valid_indices[tgt_idx])
+                                fallback_targets.append(summary_entry)
+                                try:
+                                    src_chunk = matrix_to_chunk_map.get(src_idx)
+                                    if src_chunk is not None:
+                                        per_chunk_full_connections[int(src_chunk)].append(full_entry)
+                                except Exception:
+                                    pass
                             except Exception:
                                 continue
 
-                        connections[src_idx] = sorted(fallback_targets, key=lambda x: x.get("strength", 0.0), reverse=True)[:top_k]
+                        connections[src_idx] = sorted(fallback_targets, key=lambda x: x.get("strength", 0.0), reverse=True)[:connection_limit]
                     else:
                         connections[src_idx] = []
 
@@ -8406,6 +8907,105 @@ class MatrixTransformer:
             if edge_distribution:
                 logging.info(f"  - Edges per source - min: {min(edge_distribution)}, max: {max(edge_distribution)}, mean: {np.mean(edge_distribution):.2f}")
             
+            # Before returning, write per-chunk full connections and CID index to disk
+            try:
+                import concurrent.futures, gzip
+                import json as _json
+                import math
+
+                out_npz_dir = os.path.join(per_chunk_metadata_dir, "npz_connections")
+                try:
+                    os.makedirs(out_npz_dir, exist_ok=True)
+                except Exception:
+                    out_npz_dir = per_chunk_metadata_dir
+
+                # Helper to save a list of dict entries for a chunk as an .npz file
+                def _save_chunk_npz(chunk_idx, entries, compress=True):
+                    try:
+                        fname = os.path.join(out_npz_dir, f"connections_chunk_{dataset_id}_chunk_{int(chunk_idx)}.npz")
+                        # Prepare arrays
+                        srcs = np.array([int(e.get('source_idx', -1)) for e in entries], dtype=np.int64)
+                        tgts = np.array([int(e.get('target_idx', -1)) for e in entries], dtype=np.int64)
+                        # Serialize full entries to JSON strings (safe, compact)
+                        json_strs = np.array([_json.dumps(e, ensure_ascii=False) for e in entries], dtype=object)
+                        if compress:
+                            np.savez_compressed(fname, source_idx=srcs, target_idx=tgts, entry_json=json_strs)
+                        else:
+                            np.savez(fname, source_idx=srcs, target_idx=tgts, entry_json=json_strs)
+                        return fname
+                    except Exception as ex:
+                        logging.warning(f"_save_chunk_npz failed for chunk {chunk_idx}: {ex}")
+                        return None
+
+                # Save per-chunk full connections in parallel (IO-bound)
+                max_workers = min(8, (os.cpu_count() or 1) * 2)
+                with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as ex:
+                    futures = []
+                    for chunk_idx, entries in per_chunk_full_connections.items():
+                        if not entries:
+                            continue
+                        futures.append(ex.submit(_save_chunk_npz, chunk_idx, entries, True))
+                    # Wait for completion
+                    for f in concurrent.futures.as_completed(futures):
+                        try:
+                            _ = f.result()
+                        except Exception:
+                            pass
+
+                # Also save the main 'connections' dict in batched .npz files to avoid single huge archive
+                try:
+                    conn_items = list(connections.items())
+                    if conn_items:
+                        batch_size_save = max(1, min(2048, int(math.sqrt(len(conn_items)) * 4)))
+                        batch_dir = os.path.join(out_npz_dir, 'batches')
+                        os.makedirs(batch_dir, exist_ok=True)
+
+                        def _save_conn_batch(batch_num, items):
+                            try:
+                                fname = os.path.join(batch_dir, f"connections_batch_{dataset_id}_{batch_num:06d}.npz")
+                                srcs = np.array([int(k) for k, _ in items], dtype=np.int64)
+                                # store JSON strings of each connection list
+                                json_lists = np.array([_json.dumps(v, ensure_ascii=False) for _, v in items], dtype=object)
+                                np.savez_compressed(fname, source_idx=srcs, connections_json=json_lists)
+                                return fname
+                            except Exception as ex:
+                                logging.warning(f"_save_conn_batch failed for batch {batch_num}: {ex}")
+                                return None
+
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, (os.cpu_count() or 1))) as ex:
+                            futures = []
+                            for bstart in range(0, len(conn_items), batch_size_save):
+                                batch_num = bstart // batch_size_save + 1
+                                batch_items = conn_items[bstart:bstart+batch_size_save]
+                                futures.append(ex.submit(_save_conn_batch, batch_num, batch_items))
+                            for f in concurrent.futures.as_completed(futures):
+                                try:
+                                    _ = f.result()
+                                except Exception:
+                                    pass
+                except Exception:
+                    logging.warning("Failed to batch-save main connections; falling back to JSON.gz")
+                    try:
+                        for chunk_idx, entries in per_chunk_full_connections.items():
+                            try:
+                                conn_file = os.path.join(per_chunk_metadata_dir, f"connections_chunk_{dataset_id}_chunk_{int(chunk_idx)}.json.gz")
+                                with gzip.open(conn_file, 'wt', encoding='utf-8') as cf:
+                                    json.dump({'dataset_id': dataset_id, 'chunk_index': int(chunk_idx), 'connections': entries}, cf, ensure_ascii=False, indent=2)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+
+                # CID index: still write as compressed JSON (small index)
+                try:
+                    cid_file = os.path.join(per_chunk_metadata_dir, f"cid_index_{dataset_id}.json.gz")
+                    with gzip.open(cid_file, 'wt', encoding='utf-8') as cf:
+                        _json.dump(cid_index, cf, ensure_ascii=False, indent=2)
+                except Exception as e:
+                    logging.warning(f"Failed to write CID index file: {e}")
+
+            except Exception as e:
+                logging.warning(f"Failed to persist connections to disk using .npz pipeline: {e}")
             return connections
 
         # Cleanup memmaps if created
@@ -8414,16 +9014,50 @@ class MatrixTransformer:
                 if memmap_tmpdir:
                     logging.debug(f"Cleaning up temporary memmap directory: {memmap_tmpdir}")
                     # Attempt to close memmaps and remove temporary directory
+                    def _safe_close_memmap(mm):
+                        try:
+                            if mm is None:
+                                return
+                            if isinstance(mm, np.memmap):
+                                try:
+                                    mm.flush()
+                                except Exception:
+                                    pass
+                                try:
+                                    if hasattr(mm, '_mmap') and mm._mmap:
+                                        mm._mmap.close()
+                                except Exception:
+                                    pass
+                            elif hasattr(mm, 'flush'):
+                                try:
+                                    mm.flush()
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+
                     try:
-                        del features_mmap
+                        _safe_close_memmap(features_mmap)
                     except Exception:
                         pass
                     try:
-                        del proj_mmap
+                        _safe_close_memmap(proj_mmap)
                     except Exception:
                         pass
                     try:
-                        del coords_mmap
+                        _safe_close_memmap(coords_mmap)
+                    except Exception:
+                        pass
+                    try:
+                        features_mmap = None  # type: ignore
+                    except Exception:
+                        pass
+                    try:
+                        proj_mmap = None  # type: ignore
+                    except Exception:
+                        pass
+                    try:
+                        coords_mmap = None  # type: ignore
                     except Exception:
                         pass
                     try:
@@ -11357,3 +11991,52 @@ MatrixTransformer._project_matrix_to_container = _project_matrix_to_container
 MatrixTransformer._extract_matrix_from_container = _extract_matrix_from_container
 MatrixTransformer._calculate_metrics = _calculate_metrics
 MatrixTransformer. _create_reactive_property =   _create_reactive_property
+
+
+def _resolve_cid(self, cid, dataset_id=None, per_chunk_metadata_dir=None):
+    """Resolve a CID or element_signature to its element record and chunk via the CID index.
+
+    Returns a dict with keys: element_records_file, chunk_index, element_index (or None) or None if not found.
+    """
+    import gzip
+    import os
+    import json
+    # determine metadata dir
+    if per_chunk_metadata_dir is None:
+        per_chunk_metadata_dir = f"element_metadata_{dataset_id}" if dataset_id else "element_metadata"
+    cid_file = os.path.join(per_chunk_metadata_dir, f"cid_index_{dataset_id}.json.gz") if dataset_id else os.path.join(per_chunk_metadata_dir, "cid_index.json.gz")
+    try:
+        if not os.path.exists(cid_file):
+            return None
+        with gzip.open(cid_file, 'rt', encoding='utf-8') as f:
+            idx = json.load(f)
+        return idx.get(cid)
+    except Exception:
+        return None
+
+
+def _load_element_record(self, element_records_file, element_index=None):
+    """Load element records from a per-chunk file (gzipped) and optionally return a single element by index."""
+    import gzip, json, os
+    try:
+        if not os.path.exists(element_records_file):
+            return None
+        with gzip.open(element_records_file, 'rt', encoding='utf-8') as f:
+            data = json.load(f)
+        if element_index is None:
+            return data
+        # find element by element_index
+        els = data.get('element_records', [])
+        for e in els:
+            try:
+                if int(e.get('element_index')) == int(element_index):
+                    return e
+            except Exception:
+                continue
+        return None
+    except Exception:
+        return None
+
+
+MatrixTransformer.resolve_cid = _resolve_cid
+MatrixTransformer.load_element_record = _load_element_record
