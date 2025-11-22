@@ -159,7 +159,7 @@ for matrix_type in path:
 
 ## Documentation
 
-- `docs/find_hyperdimensional_connections.md` — Detailed API & behavior reference for `find_hyperdimensional_connections`.
+- [find_hyperdimensional_connections — Detailed API & behavior reference](docs/find_hyperdimensional_connections.md)
 
 ## Recent Updates
 
