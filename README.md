@@ -157,6 +157,10 @@ for matrix_type in path:
 
 ---
 
+## Documentation
+
+- `docs/find_hyperdimensional_connections.md` — Detailed API & behavior reference for `find_hyperdimensional_connections`.
+
 ## Recent Updates
 
 **v0.1.1 - November 22, 2025**

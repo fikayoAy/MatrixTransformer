@@ -39,39 +39,74 @@ class MetricsValidator:
         
         # Extract all connections into flat list
         self.connections = []
-        
-        # Check if data has 'connections' key (new structure)
-        if 'connections' in data and isinstance(data['connections'], dict):
-            logger.debug("Found 'connections' key in data structure")
-            connections_data = data['connections']
+
+        # New format: top-level 'datasets' -> <dataset_id> -> 'connections'
+        if isinstance(data, dict) and 'datasets' in data and isinstance(data['datasets'], dict):
+            logger.debug("Found 'datasets' structure in connections file")
+            for dsid, dsobj in data['datasets'].items():
+                conns = dsobj.get('connections', {}) if isinstance(dsobj, dict) else {}
+                if not isinstance(conns, dict):
+                    continue
+                for source_idx_str, conn_list in conns.items():
+                    # Skip non-numeric keys
+                    try:
+                        source_idx = int(source_idx_str)
+                    except Exception:
+                        logger.debug(f"Skipping non-numeric source key: {source_idx_str} in dataset {dsid}")
+                        continue
+                    # conn_list expected to be a list of connection dicts
+                    if isinstance(conn_list, list):
+                        for conn in conn_list:
+                            if not isinstance(conn, dict) or not conn:
+                                continue
+                            c = dict(conn)
+                            c['source_idx'] = source_idx
+                            c['source_dataset'] = dsid
+                            self.connections.append(c)
+                    elif isinstance(conn_list, dict) and 'connections' in conn_list:
+                        for conn in conn_list.get('connections', []):
+                            if not isinstance(conn, dict) or not conn:
+                                continue
+                            c = dict(conn)
+                            c['source_idx'] = source_idx
+                            c['source_dataset'] = dsid
+                            self.connections.append(c)
+                    else:
+                        logger.debug(f"Unexpected connection list type for source {source_idx} in dataset {dsid}: {type(conn_list)}")
+
         else:
-            logger.debug("Using root-level data structure")
-            connections_data = data
-        
-        # Iterate through source indices
-        for source_idx, conn_list in connections_data.items():
-            # Skip non-numeric keys (metadata, summary, variance_metrics, etc.)
-            if source_idx in ['summary', 'metadata', 'variance_metrics']:
-                continue
-            try:
-                source = int(source_idx)
-            except ValueError:
-                # Skip any other non-numeric keys
-                logger.debug(f"Skipping non-numeric key: {source_idx}")
-                continue
-            
-            # Handle both list and dict formats for connections
-            if isinstance(conn_list, list):
-                for conn in conn_list:
-                    conn['source_idx'] = source
-                    self.connections.append(conn)
-            elif isinstance(conn_list, dict) and 'connections' in conn_list:
-                for conn in conn_list['connections']:
-                    conn['source_idx'] = source
-                    self.connections.append(conn)
-            else:
-                logger.warning(f"Unexpected structure for source {source_idx}: {type(conn_list)}")
-        
+            # Backwards-compatible handling: top-level 'connections' mapping or flat mapping
+            logger.debug("Falling back to legacy connections layout")
+            connections_data = {}
+            if isinstance(data, dict) and 'connections' in data and isinstance(data['connections'], dict):
+                connections_data = data['connections']
+            elif isinstance(data, dict):
+                connections_data = data
+            for source_idx, conn_list in connections_data.items():
+                if source_idx in ['summary', 'metadata', 'variance_metrics']:
+                    continue
+                try:
+                    source = int(source_idx)
+                except Exception:
+                    logger.debug(f"Skipping non-numeric key: {source_idx}")
+                    continue
+                if isinstance(conn_list, list):
+                    for conn in conn_list:
+                        if not isinstance(conn, dict) or not conn:
+                            continue
+                        c = dict(conn)
+                        c['source_idx'] = source
+                        self.connections.append(c)
+                elif isinstance(conn_list, dict) and 'connections' in conn_list:
+                    for conn in conn_list['connections']:
+                        if not isinstance(conn, dict) or not conn:
+                            continue
+                        c = dict(conn)
+                        c['source_idx'] = source
+                        self.connections.append(c)
+                else:
+                    logger.debug(f"Unexpected structure for source {source_idx}: {type(conn_list)}")
+
         logger.info(f"Loaded {len(self.connections)} connections")
         return self.connections
     
