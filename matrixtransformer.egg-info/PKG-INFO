@@ -1,11 +1,10 @@
-Metadata-Version: 2.1
+Metadata-Version: 2.4
 Name: matrixtransformer
 Version: 0.1.0
 Summary: A deterministic AI framework for structure-preserving matrix transformations
 Home-page: https://github.com/fikayoAy/MatrixTransformer
 Author: Fikayomi Ayodele
 Author-email: Ayodeleanjola4@gmail.com
-License: UNKNOWN
 Project-URL: Bug Tracker, https://github.com/fikayoAy/MatrixTransformer/issues
 Project-URL: Documentation, https://github.com/fikayoAy/MatrixTransformer#readme
 Project-URL: Source Code, https://github.com/fikayoAy/MatrixTransformer
@@ -33,12 +32,74 @@ Classifier: Topic :: Scientific/Engineering :: Information Analysis
 Classifier: Topic :: Software Development :: Libraries :: Python Modules
 Requires-Python: >=3.8
 Description-Content-Type: text/markdown
-Provides-Extra: full
-Provides-Extra: viz
-Provides-Extra: ml
-Provides-Extra: jupyter
-Provides-Extra: dev
 License-File: LICENSE.txt
+Requires-Dist: numpy>=1.21.0
+Requires-Dist: pandas>=1.3.0
+Requires-Dist: scipy>=1.7.0
+Requires-Dist: scikit-learn>=1.0.0
+Requires-Dist: torch>=1.9.0
+Requires-Dist: networkx>=2.6
+Requires-Dist: matplotlib>=3.5.0
+Requires-Dist: pillow>=8.3.0
+Requires-Dist: tqdm>=4.62.0
+Requires-Dist: joblib>=1.0.0
+Provides-Extra: full
+Requires-Dist: numpy>=1.21.0; extra == "full"
+Requires-Dist: pandas>=1.3.0; extra == "full"
+Requires-Dist: scipy>=1.7.0; extra == "full"
+Requires-Dist: scikit-learn>=1.0.0; extra == "full"
+Requires-Dist: umap-learn>=0.5.0; extra == "full"
+Requires-Dist: hdbscan>=0.8.0; extra == "full"
+Requires-Dist: torch>=1.9.0; extra == "full"
+Requires-Dist: torchvision>=0.10.0; extra == "full"
+Requires-Dist: networkx>=2.6; extra == "full"
+Requires-Dist: matplotlib>=3.5.0; extra == "full"
+Requires-Dist: seaborn>=0.11.0; extra == "full"
+Requires-Dist: plotly>=5.0.0; extra == "full"
+Requires-Dist: pillow>=8.3.0; extra == "full"
+Requires-Dist: jupyter>=1.0.0; extra == "full"
+Requires-Dist: ipywidgets>=7.6.0; extra == "full"
+Requires-Dist: ipython>=7.0.0; extra == "full"
+Requires-Dist: joblib>=1.0.0; extra == "full"
+Requires-Dist: numba>=0.56.0; extra == "full"
+Requires-Dist: psutil>=5.8.0; extra == "full"
+Requires-Dist: tqdm>=4.62.0; extra == "full"
+Requires-Dist: statsmodels>=0.13.0; extra == "full"
+Requires-Dist: openpyxl>=3.0.0; extra == "full"
+Requires-Dist: xlrd>=2.0.0; extra == "full"
+Requires-Dist: jupyterlab>=3.0.0; extra == "full"
+Provides-Extra: viz
+Requires-Dist: matplotlib>=3.5.0; extra == "viz"
+Requires-Dist: seaborn>=0.11.0; extra == "viz"
+Requires-Dist: plotly>=5.0.0; extra == "viz"
+Provides-Extra: ml
+Requires-Dist: umap-learn>=0.5.0; extra == "ml"
+Requires-Dist: hdbscan>=0.8.0; extra == "ml"
+Requires-Dist: statsmodels>=0.13.0; extra == "ml"
+Provides-Extra: jupyter
+Requires-Dist: jupyter>=1.0.0; extra == "jupyter"
+Requires-Dist: jupyterlab>=3.0.0; extra == "jupyter"
+Requires-Dist: ipywidgets>=7.6.0; extra == "jupyter"
+Requires-Dist: ipython>=7.0.0; extra == "jupyter"
+Provides-Extra: dev
+Requires-Dist: pytest>=6.0.0; extra == "dev"
+Requires-Dist: black>=21.0; extra == "dev"
+Requires-Dist: flake8>=3.9.0; extra == "dev"
+Requires-Dist: mypy>=0.910; extra == "dev"
+Dynamic: author
+Dynamic: author-email
+Dynamic: classifier
+Dynamic: description
+Dynamic: description-content-type
+Dynamic: home-page
+Dynamic: keywords
+Dynamic: license-file
+Dynamic: platform
+Dynamic: project-url
+Dynamic: provides-extra
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary
 
 <!-- filepath: c:\Users\ayode\ConstantA\matrixTransfomer\README.md -->
 # MatrixTransformer: Engineering Intelligence Through Deterministic Matrix Relationships
@@ -199,10 +260,17 @@ for matrix_type in path:
 
 ---
 
+## Documentation
+
+- [find_hyperdimensional_connections — Detailed API & behavior reference](docs/find_hyperdimensional_connections.md)
+
 ## Recent Updates
 
+**v0.1.1 - November 22, 2025**
+- Added streaming/batch processing, memmap support, ANN option, and element-level metadata for `find_hyperdimensional_connections` (see CHANGELOG for details)
+
 **v0.1.0 - November 2025**
-- Fixed angular tolerance bug in `find_hyperdimensional_connections` 
+- Fixed angular tolerance bug in `find_hyperdimensional_connections`
 - Changed from dot-product-based to angle-based tolerance (1e-7 threshold was treating small non-zero angles as zero)
 - Improved distance metric calculations for hypersphere projections
 
@@ -256,5 +324,3 @@ See [CHANGELOG.md](CHANGELOG.md) for detailed technical information.
 > **Paper Links**:  
 > [Hyperdimensional Connection Method](https://doi.org/10.5281/zenodo.16051260)  
 > [MatrixTransformer Framework](https://zenodo.org/records/15867279)
-
-
